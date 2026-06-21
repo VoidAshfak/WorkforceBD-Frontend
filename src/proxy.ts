@@ -7,7 +7,7 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("proxy");
 
 const AUTH_PATHS = ["/welcome", "/login", "/verify"];
-const APP_PATHS = ["/", "/explore", "/activity", "/wallet", "/profile", "/onboarding"];
+const APP_PATHS = ["/", "/explore", "/activity", "/wallet", "/profile", "/onboarding", "/shifts"];
 
 const isAppPath = (path: string) =>
   APP_PATHS.some((p) => path === p || (p !== "/" && path.startsWith(`${p}/`)));
