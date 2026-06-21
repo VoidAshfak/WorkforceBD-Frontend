@@ -165,7 +165,7 @@ export default function WorkerOnboardingPage() {
   if (submitted) return <SuccessScreen onDone={finish} />;
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-10 bg-background/95 px-6 pb-3 pt-5 backdrop-blur">
         <button
           type="button"
@@ -494,7 +494,7 @@ function DocumentsStep(props: {
 
 function SuccessScreen({ onDone }: { onDone: () => void }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center px-8 text-center">
+    <div className="flex min-h-full flex-col items-center justify-center px-8 text-center">
       <span className="wf-pop flex h-24 w-24 items-center justify-center rounded-full bg-brand">
         <PartyPopper size={44} className="text-ink" />
       </span>

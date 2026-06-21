@@ -7,7 +7,7 @@ import SessionGate from "@/components/auth/SessionGate";
  */
 export default function OnboardingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background">
+    <div className="flex min-h-full w-full flex-col">
       <SessionGate>{children}</SessionGate>
     </div>
   );
