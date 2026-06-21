@@ -7,9 +7,9 @@ import SessionGate from "@/components/auth/SessionGate";
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background">
+    <div className="flex h-full flex-col">
       <SessionGate>
-        <main className="flex-1 pb-16">{children}</main>
+        <main className="flex-1">{children}</main>
         <BottomNav />
       </SessionGate>
     </div>

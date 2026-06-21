@@ -45,7 +45,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="flex min-h-dvh flex-col px-6 py-10">
+    <div className="flex min-h-full flex-col px-6 py-10">
       <h1 className="text-2xl font-bold text-ink">Profile</h1>
 
       <div className="mt-6 flex items-center gap-4 rounded-2xl border border-border bg-surface p-5">

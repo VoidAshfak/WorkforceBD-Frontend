@@ -27,7 +27,7 @@ export default function SessionGate({ children }: { children: React.ReactNode })
 
   if (isLoading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center">
+      <div className="flex min-h-full items-center justify-center">
         <span className="h-8 w-8 animate-spin rounded-full border-[3px] border-ink/20 border-t-ink" />
       </div>
     );

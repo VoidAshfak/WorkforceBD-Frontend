@@ -11,7 +11,7 @@ export default function ScreenPlaceholder({
   icon: LucideIcon;
 }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="flex min-h-full flex-col items-center justify-center gap-4 px-6 text-center">
       <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand">
         <Icon size={28} className="text-ink" strokeWidth={2.2} />
       </span>
