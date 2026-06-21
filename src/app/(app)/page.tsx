@@ -6,6 +6,7 @@ import { Briefcase, Clock, Compass, Sparkles } from "lucide-react";
 
 import FilterTabs from "@/components/shifts/FilterTabs";
 import SwipeDeck from "@/components/shifts/SwipeDeck";
+import NotificationBell from "@/components/notifications/NotificationBell";
 import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
 import { useAppSelector } from "@/store/hooks";
 import { useGetShiftsQuery } from "@/store/api/shiftsApi";
@@ -65,9 +66,14 @@ function WorkerHome({
 
   return (
     <div className="flex h-full flex-col px-6 pt-6">
-      <header className="shrink-0">
-        <p className="text-[13px] text-text-secondary">Welcome back 👋</p>
-        <h1 className="text-2xl font-bold text-ink">{name ?? "Find your next shift"}</h1>
+      <header className="flex shrink-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] text-text-secondary">Welcome back 👋</p>
+          <h1 className="truncate text-2xl font-bold text-ink">
+            {name ?? "Find your next shift"}
+          </h1>
+        </div>
+        <NotificationBell className="mt-1 shrink-0" />
       </header>
 
       {!verified ? (
