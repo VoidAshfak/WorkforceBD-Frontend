@@ -63,10 +63,14 @@ export default function VerifyPage() {
 
       dispatch(clearPending());
 
-      // Verified users get full access; everyone else still lands in the app
-      // shell (onboarding routing is wired as those screens are built).
-      log.info("verified", { role: session.active_role });
-      router.replace("/");
+      // Route by onboarding state: a worker with an unfinished profile goes
+      // straight into the wizard; everyone else lands in the app shell.
+      log.info("verified", { role: session.active_role, next: session.profile?.next_step });
+      const needsOnboarding =
+        session.active_role === "worker" &&
+        session.profile?.verification_status !== "verified" &&
+        Boolean(session.profile?.next_step);
+      router.replace(needsOnboarding ? "/onboarding/worker" : "/");
     } catch (err) {
       setOtp("");
       const message =
