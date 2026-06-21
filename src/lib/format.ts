@@ -50,3 +50,22 @@ export function formatTimeRange(start: string, end: string): string {
   const b = formatTime(end);
   return a && b ? `${a} – ${b}` : a || b;
 }
+
+/**
+ * Compact "time ago" for feed timestamps: `Now`, `5m`, `3h`, `2d`, else a
+ * short date like `17 Jun`. Input is a full ISO datetime.
+ */
+export function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+
+  if (seconds < 60) return "Now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(then).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
