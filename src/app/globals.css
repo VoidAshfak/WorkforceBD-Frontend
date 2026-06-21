@@ -1,26 +1,55 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/*
+  WorkforceBD design tokens (see /docs/DESIGN.md).
+  Change a value here to re-theme the whole app — colors are never hard-coded in components.
+*/
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Brand — yellow */
+  --color-brand: #ffdb5b;
+  --color-brand-light: #ffedb3;
+  --color-brand-dark: #ffd95c;
+
+  /* Accents */
+  --color-emerald: #1a964a;
+  --color-emerald-dark: #0a6947;
+  --color-sky: #1f98f9;
+  --color-link: #0000ee;
+  --color-cream: #fff7de;
+
+  /* Surfaces */
+  --color-surface: #ffffff;
+  --color-background: #ffffff;
+  --color-border: #dcdcdc;
+
+  /* Text / ink */
+  --color-ink: #202020; /* primary text + primary button fill */
+  --color-ink-soft: #141414;
+  --color-text-secondary: #575656;
+  --color-text-tertiary: #6b6b6b;
+  --color-text-muted: #3b3b3b;
+
+  /* Semantic */
+  --color-danger: #cd2e0f;
+  --color-warning: #ffc629;
+
+  /* Typography */
+  --font-sans: var(--font-app-sans), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Radii (DESIGN.md scale) */
+  --radius-input: 8px;
+  --radius-card: 16px;
+  --radius-pill: 25px;
+  --radius-full: 1000px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }
