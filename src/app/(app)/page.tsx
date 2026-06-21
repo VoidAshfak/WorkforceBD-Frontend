@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Briefcase, Clock, Compass, Sparkles } from "lucide-react";
+import { Briefcase, Clock, Compass, RefreshCw, Sparkles } from "lucide-react";
 
 import FilterTabs from "@/components/shifts/FilterTabs";
 import SwipeDeck from "@/components/shifts/SwipeDeck";
@@ -53,7 +53,11 @@ function WorkerHome({
   const [filter, setFilter] = useState<ShiftFilter>("all");
   const [page, setPage] = useState(1);
 
-  const { data, isLoading, isFetching } = useGetShiftsQuery({ filter, page, limit: 10 });
+  const { data, isLoading, isFetching, isError, refetch } = useGetShiftsQuery({
+    filter,
+    page,
+    limit: 10,
+  });
 
   const changeFilter = (next: ShiftFilter) => {
     setFilter(next);
@@ -93,6 +97,8 @@ function WorkerHome({
       <div className="flex min-h-0 flex-1 flex-col pt-4 pb-2">
         {isLoading ? (
           <DeckSkeleton />
+        ) : isError && items.length === 0 ? (
+          <ErrorState filter={filter} onRetry={() => refetch()} />
         ) : items.length > 0 ? (
           // Remount on filter change so the deck index resets to the top.
           <SwipeDeck
@@ -173,6 +179,31 @@ function DeckSkeleton() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ErrorState({ filter, onRetry }: { filter: ShiftFilter; onRetry: () => void }) {
+  // `nearby` 500s on the backend when the worker has no preferred zones; surface
+  // that as the likely cause rather than a generic failure.
+  const isNearby = filter === "nearby";
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-[28px] border border-border bg-surface p-10 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-warning/15">
+        <RefreshCw size={20} className="text-text-muted" />
+      </span>
+      <p className="max-w-xs text-[14px] text-text-secondary">
+        {isNearby
+          ? "Couldn’t load nearby shifts. Add preferred zones in your profile, or try again."
+          : "Couldn’t load shifts right now. Please try again."}
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-1 rounded-full bg-ink px-5 py-2.5 text-[14px] font-semibold text-white active:scale-95"
+      >
+        Retry
+      </button>
     </div>
   );
 }
