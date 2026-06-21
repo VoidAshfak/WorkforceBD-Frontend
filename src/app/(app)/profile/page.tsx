@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { BadgeCheck, Clock, LogOut, ShieldX } from "lucide-react";
+import { ArrowRight, BadgeCheck, Clock, LogOut, ShieldX, Sparkles } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -28,6 +28,11 @@ export default function ProfilePage() {
   const status = profile?.verification_status ?? "unverified";
   const badge = STATUS_UI[status];
   const BadgeIcon = badge.icon;
+
+  // Worker with an unfinished profile → nudge them into the onboarding wizard.
+  const showCompleteCta =
+    activeRole === "worker" && status !== "verified" && Boolean(profile?.next_step);
+  const completion = profile?.profile_completion ?? 0;
 
   const onLogout = async () => {
     try {
@@ -65,6 +70,25 @@ export default function ProfilePage() {
           {badge.label}
         </span>
       </div>
+
+      {showCompleteCta ? (
+        <button
+          type="button"
+          onClick={() => router.push("/onboarding/worker")}
+          className="mt-4 flex items-center gap-3 rounded-2xl bg-brand p-4 text-left active:scale-[0.99]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+            <Sparkles size={18} />
+          </span>
+          <span className="flex-1">
+            <span className="block text-[15px] font-bold text-ink">Finish your profile</span>
+            <span className="block text-[13px] text-text-muted">
+              {completion}% done · unlock applying for shifts
+            </span>
+          </span>
+          <ArrowRight size={18} className="text-ink" />
+        </button>
+      ) : null}
 
       <Button variant="secondary" fullWidth loading={isLoading} onClick={onLogout} className="mt-auto">
         <LogOut size={18} />

@@ -53,3 +53,44 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
 }
+
+/* Onboarding wizard motion — keeps step changes lively without a JS animation lib. */
+@keyframes wf-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes wf-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.wf-step-enter {
+  animation: wf-slide-up 0.3s ease-out both;
+}
+
+.wf-pop {
+  animation: wf-pop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-step-enter,
+  .wf-pop {
+    animation: none;
+  }
+}
