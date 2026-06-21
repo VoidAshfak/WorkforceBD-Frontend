@@ -1,4 +1,5 @@
 import BottomNav from "@/components/navigation/BottomNav";
+import SessionGate from "@/components/auth/SessionGate";
 
 /**
  * Mobile app shell. Centers content in a phone-width column and pins the
@@ -7,8 +8,10 @@ import BottomNav from "@/components/navigation/BottomNav";
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background">
-      <main className="flex-1 pb-16">{children}</main>
-      <BottomNav />
+      <SessionGate>
+        <main className="flex-1 pb-16">{children}</main>
+        <BottomNav />
+      </SessionGate>
     </div>
   );
 }

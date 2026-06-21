@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
+import ReduxProvider from "@/components/providers/ReduxProvider";
 
 // BumbleSans (per DESIGN.md) is proprietary; Plus Jakarta Sans is the closest
 // free, rounded geometric sans. Wired through the --font-app-sans token.
@@ -29,7 +30,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${appSans.variable} h-full antialiased`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <ReduxProvider>{children}</ReduxProvider>
+      </body>
     </html>
   );
 }

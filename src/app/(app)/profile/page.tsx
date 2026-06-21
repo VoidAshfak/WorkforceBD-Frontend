@@ -1,13 +1,75 @@
-import { User } from "lucide-react";
+"use client";
 
-import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import { useRouter } from "next/navigation";
+import { BadgeCheck, Clock, LogOut, ShieldX } from "lucide-react";
+
+import Button from "@/components/ui/Button";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { clearSession } from "@/store/slices/authSlice";
+import { useLogoutMutation } from "@/store/api/authApi";
+import type { VerificationStatus } from "@/types/auth";
+
+const STATUS_UI: Record<
+  VerificationStatus,
+  { label: string; className: string; icon: typeof BadgeCheck }
+> = {
+  verified: { label: "Verified", className: "bg-emerald/10 text-emerald", icon: BadgeCheck },
+  pending: { label: "Under review", className: "bg-warning/20 text-text-muted", icon: Clock },
+  unverified: { label: "Not verified", className: "bg-black/5 text-text-secondary", icon: ShieldX },
+  rejected: { label: "Rejected", className: "bg-danger/10 text-danger", icon: ShieldX },
+};
 
 export default function ProfilePage() {
+  const router = useRouter();
+  const dispatch = useAppDispatch();
+  const { user, activeRole, profile } = useAppSelector((s) => s.auth);
+  const [logout, { isLoading }] = useLogoutMutation();
+
+  const status = profile?.verification_status ?? "unverified";
+  const badge = STATUS_UI[status];
+  const BadgeIcon = badge.icon;
+
+  const onLogout = async () => {
+    try {
+      await logout().unwrap();
+    } catch {
+      // ignore — clear client session regardless
+    }
+    dispatch(clearSession());
+    router.replace("/welcome");
+  };
+
   return (
-    <ScreenPlaceholder
-      icon={User}
-      title="Profile"
-      subtitle="Your reputation, verification badges, skills, and account settings live here."
-    />
+    <div className="flex min-h-dvh flex-col px-6 py-10">
+      <h1 className="text-2xl font-bold text-ink">Profile</h1>
+
+      <div className="mt-6 flex items-center gap-4 rounded-2xl border border-border bg-surface p-5">
+        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-brand text-xl font-bold text-ink">
+          {(user?.full_name?.trim()?.[0] ?? "U").toUpperCase()}
+        </span>
+        <div className="flex-1">
+          <p className="text-lg font-bold text-ink">{user?.full_name ?? "Add your name"}</p>
+          <p className="text-[14px] text-text-secondary">{user?.phone}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between rounded-2xl border border-border bg-surface p-4">
+        <div>
+          <p className="text-[13px] uppercase tracking-wide text-text-tertiary">Active role</p>
+          <p className="text-[15px] font-semibold capitalize text-ink">{activeRole ?? "—"}</p>
+        </div>
+        <span
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium ${badge.className}`}
+        >
+          <BadgeIcon size={15} />
+          {badge.label}
+        </span>
+      </div>
+
+      <Button variant="secondary" fullWidth loading={isLoading} onClick={onLogout} className="mt-auto">
+        <LogOut size={18} />
+        Log out
+      </Button>
+    </div>
   );
 }
