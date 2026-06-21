@@ -1,25 +1,52 @@
 import "server-only";
 
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("backend");
+
 /**
- * Server-side gateway to the WorkforceBD REST API.
- * Only the BFF route handlers touch this — the browser never calls the backend
- * directly, so access tokens stay in httpOnly cookies and out of JS reach.
+ * Base URL of the WorkforceBD REST API. Override with the `API_BASE_URL`
+ * environment variable; falls back to the hosted cloud instance.
  */
 export const API_BASE_URL =
   process.env.API_BASE_URL ?? "https://workforcebd.onrender.com/api/v1";
 
+/**
+ * Normalized outcome of a backend call. `body` is the parsed JSON envelope the
+ * API returns (`{ success, message, data?, errors? }`).
+ *
+ * @typeParam T - Shape merged into the response envelope's data fields.
+ */
 export type BackendResult<T> = {
+  /** `true` when the HTTP status is 2xx. */
   ok: boolean;
+  /** HTTP status code (or `503` when the host is unreachable). */
   status: number;
   body: T & { success?: boolean; message?: string; errors?: unknown[] };
 };
 
+/** Options for a single {@link backend} request. */
 type Options = {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+  /** JSON-serializable request body. Omit for `GET`. */
   body?: unknown;
+  /** Bearer token injected as `Authorization`. Sourced from httpOnly cookies. */
   accessToken?: string;
 };
 
+/**
+ * Server-side gateway to the WorkforceBD REST API.
+ *
+ * Only the BFF route handlers (`src/app/api/auth/*`) call this — the browser
+ * never reaches the backend directly, so access tokens stay in httpOnly cookies
+ * and out of JS reach. Network failures are converted into a `503` result
+ * instead of throwing, so callers branch on `result.ok` rather than try/catch.
+ *
+ * @typeParam T - Expected shape of the response `data`.
+ * @param path - Path appended to {@link API_BASE_URL}, e.g. `"/auth/me"`.
+ * @param options - Method, body, and optional bearer token. See {@link Options}.
+ * @returns A {@link BackendResult} — always resolves, never rejects.
+ */
 export async function backend<T = Record<string, unknown>>(
   path: string,
   { method = "GET", body, accessToken }: Options = {},
@@ -28,6 +55,7 @@ export async function backend<T = Record<string, unknown>>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
+  const startedAt = Date.now();
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
@@ -36,7 +64,13 @@ export async function backend<T = Record<string, unknown>>(
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });
-  } catch {
+  } catch (err) {
+    log.error("request failed (network)", {
+      method,
+      path,
+      ms: Date.now() - startedAt,
+      error: (err as Error)?.message,
+    });
     return {
       ok: false,
       status: 503,
@@ -50,6 +84,14 @@ export async function backend<T = Record<string, unknown>>(
   } catch {
     parsed = { success: res.ok, message: res.statusText };
   }
+
+  // Bodies are intentionally not logged here — they can carry tokens/OTPs.
+  log.debug("request complete", {
+    method,
+    path,
+    status: res.status,
+    ms: Date.now() - startedAt,
+  });
 
   return { ok: res.ok, status: res.status, body: parsed as BackendResult<T>["body"] };
 }

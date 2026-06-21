@@ -9,8 +9,15 @@ import Button from "@/components/ui/Button";
 import { useAppDispatch } from "@/store/hooks";
 import { setPending } from "@/store/slices/authSlice";
 import { useSendOtpMutation } from "@/store/api/authApi";
+import { createLogger } from "@/lib/logger";
 import { normalizePhone, phoneSchema, roleSchema, type Role } from "@/lib/validation/auth";
 
+const log = createLogger("auth:login");
+
+/**
+ * Phone-entry screen (auth flow screen 2). Validates the BD number, requests an
+ * OTP via the BFF, stores the login intent, then advances to `/verify`.
+ */
 function LoginForm() {
   const router = useRouter();
   const dispatch = useAppDispatch();
@@ -43,6 +50,7 @@ function LoginForm() {
       const message =
         (err as { data?: { message?: string } })?.data?.message ??
         "Could not send OTP. Try again.";
+      log.warn("send otp failed", { message });
       setError(message);
     }
   };

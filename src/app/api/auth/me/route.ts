@@ -9,8 +9,12 @@ import {
   clearAuthCookies,
   setAuthCookies,
 } from "@/lib/server/authCookies";
+import { createLogger } from "@/lib/logger";
 import type { ProfileSummary, Role, SessionPayload } from "@/types/auth";
 
+const log = createLogger("auth:me");
+
+/** Backend `/auth/me` data — one profile summary per role the user holds. */
 type MeData = {
   id: string;
   phone: string;
@@ -21,6 +25,15 @@ type MeData = {
   profiles: Partial<Record<Role, ProfileSummary | null>>;
 };
 
+/**
+ * Resolves which role/profile to surface as "active".
+ *
+ * Prefers the role the user last authenticated into (the `wfbd_role` cookie),
+ * then the first role that has a profile, then the first role at all.
+ *
+ * @param data - The backend `/auth/me` payload.
+ * @param preferred - Role from the `wfbd_role` cookie, if any.
+ */
 function pickActive(data: MeData, preferred: Role | undefined): {
   active_role: Role | null;
   profile: ProfileSummary | null;
@@ -32,12 +45,24 @@ function pickActive(data: MeData, preferred: Role | undefined): {
   return { active_role: role, profile: role ? data.profiles[role] ?? null : null };
 }
 
+/**
+ * `GET /api/auth/me` — validates the session and returns the current user.
+ *
+ * Called on app entry. If the access token is missing or rejected, it
+ * transparently calls `/auth/refresh`, re-stores **both** rotated tokens (the
+ * refresh token is single-use), and retries. A dead session clears the cookies
+ * and returns `401`, which the client treats as "go to /welcome".
+ *
+ * @param req - Carries the httpOnly auth cookies.
+ * @returns `200` with the safe {@link SessionPayload}, or `401` when unauthenticated.
+ */
 export async function GET(req: NextRequest) {
   const accessToken = req.cookies.get(ACCESS_COOKIE)?.value;
   const refreshToken = req.cookies.get(REFRESH_COOKIE)?.value;
   const preferredRole = req.cookies.get(ROLE_COOKIE)?.value as Role | undefined;
 
   if (!accessToken && !refreshToken) {
+    log.debug("no session cookies");
     return NextResponse.json({ success: false, message: "Not authenticated" }, { status: 401 });
   }
 
@@ -51,12 +76,14 @@ export async function GET(req: NextRequest) {
   let me = token ? await fetchMe(token) : { ok: false, status: 401, body: {} as never };
 
   if (!me.ok && me.status === 401 && refreshToken) {
+    log.debug("access token rejected, refreshing");
     const refreshed = await backend<{ data: { accessToken: string; refreshToken: string } }>(
       "/auth/refresh",
       { method: "POST", body: { refresh_token: refreshToken } },
     );
 
     if (!refreshed.ok) {
+      log.info("refresh failed, clearing session", { status: refreshed.status });
       const res = NextResponse.json(
         { success: false, message: "Session expired" },
         { status: 401 },
@@ -96,5 +123,7 @@ export async function GET(req: NextRequest) {
 
   const res = NextResponse.json({ success: true, message: "Authenticated", data: payload });
   if (rotated) setAuthCookies(res, rotated.accessToken, rotated.refreshToken);
+
+  log.debug("session validated", { userId: data.id, role: active_role, refreshed: Boolean(rotated) });
   return res;
 }

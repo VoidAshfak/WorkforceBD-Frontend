@@ -10,10 +10,17 @@ import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearPending } from "@/store/slices/authSlice";
 import { useSendOtpMutation, useVerifyOtpMutation } from "@/store/api/authApi";
+import { createLogger } from "@/lib/logger";
 import { otpSchema } from "@/lib/validation/auth";
 
+const log = createLogger("auth:verify");
 const RESEND_SECONDS = 60;
 
+/**
+ * OTP verification screen (auth flow screen 3). Reads the pending login intent
+ * from Redux, verifies the code, and routes into the app shell. Auto-submits
+ * once six digits are entered; offers resend after a countdown.
+ */
 export default function VerifyPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
@@ -58,13 +65,14 @@ export default function VerifyPage() {
 
       // Verified users get full access; everyone else still lands in the app
       // shell (onboarding routing is wired as those screens are built).
-      void session;
+      log.info("verified", { role: session.active_role });
       router.replace("/");
     } catch (err) {
       setOtp("");
       const message =
         (err as { data?: { message?: string } })?.data?.message ??
         "Invalid or expired OTP";
+      log.warn("verify failed", { message });
       setError(message);
     }
   };

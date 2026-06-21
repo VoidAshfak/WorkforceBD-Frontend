@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { REFRESH_COOKIE } from "@/lib/server/authCookies";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("proxy");
 
 const AUTH_PATHS = ["/welcome", "/login", "/verify"];
 const APP_PATHS = ["/", "/explore", "/activity", "/wallet", "/profile"];
@@ -20,10 +23,12 @@ export function proxy(req: NextRequest) {
   const hasSession = Boolean(req.cookies.get(REFRESH_COOKIE)?.value);
 
   if (hasSession && isAuthPath(pathname)) {
+    log.debug("authed user on auth route -> /", { pathname });
     return NextResponse.redirect(new URL("/", req.url));
   }
 
   if (!hasSession && isAppPath(pathname)) {
+    log.debug("guest on app route -> /welcome", { pathname });
     return NextResponse.redirect(new URL("/welcome", req.url));
   }
 

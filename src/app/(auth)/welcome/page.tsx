@@ -28,6 +28,10 @@ const ROLE_CARDS: {
   },
 ];
 
+/**
+ * Unauthenticated landing (auth flow screen 1). The user picks a role, which is
+ * carried to the phone screen as `/login?role=<role>`.
+ */
 export default function WelcomePage() {
   const router = useRouter();
 
