@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-import type { PresignData, PresignPurpose, WorkerCatalog } from "@/types/worker";
+import type { PresignData, PresignPurpose, WorkerCatalog, WorkerProfile } from "@/types/worker";
 import type {
   AvailabilityInput,
   BasicInfoInput,
@@ -23,6 +23,12 @@ export const workerApi = createApi({
     getCatalog: build.query<WorkerCatalog, void>({
       query: () => ({ url: "/worker/catalog", method: "GET" }),
       transformResponse: (res: ApiEnvelope<WorkerCatalog>) => res.data,
+    }),
+
+    getWorkerProfile: build.query<WorkerProfile, void>({
+      query: () => ({ url: "/worker/profile", method: "GET" }),
+      transformResponse: (res: ApiEnvelope<WorkerProfile>) => res.data,
+      providesTags: ["WorkerProfile"],
     }),
 
     saveBasic: build.mutation<{ message: string }, BasicInfoInput>({
@@ -54,6 +60,7 @@ export const workerApi = createApi({
 
 export const {
   useGetCatalogQuery,
+  useGetWorkerProfileQuery,
   useSaveBasicMutation,
   useSaveSkillsMutation,
   useSaveAvailabilityMutation,

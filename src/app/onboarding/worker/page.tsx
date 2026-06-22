@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, PartyPopper, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, PartyPopper, ShieldCheck } from "lucide-react";
 
 import Button from "@/components/ui/Button";
+import { useFileUpload } from "@/hooks/useFileUpload";
 import StepProgress from "@/components/onboarding/StepProgress";
 import SelectableCard from "@/components/onboarding/SelectableCard";
 import ChipSelect from "@/components/onboarding/ChipSelect";
@@ -74,6 +75,7 @@ export default function WorkerOnboardingPage() {
   const [fullName, setFullName] = useState(() => user?.full_name ?? "");
   const [gender, setGender] = useState<Gender | undefined>();
   const [dob, setDob] = useState("");
+  const [profilePicture, setProfilePicture] = useState<string | null>(null);
   const [zoneIds, setZoneIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [days, setDays] = useState<AvailabilityDay[]>([]);
@@ -124,6 +126,7 @@ export default function WorkerOnboardingPage() {
           full_name: fullName.trim(),
           gender,
           date_of_birth: dob || undefined,
+          profile_picture: profilePicture ?? undefined,
           zone_ids: zoneIds,
         }).unwrap();
         setStep(1);
@@ -188,6 +191,8 @@ export default function WorkerOnboardingPage() {
               setGender={setGender}
               dob={dob}
               setDob={setDob}
+              profilePicture={profilePicture}
+              setProfilePicture={setProfilePicture}
               zoneIds={zoneIds}
               setZoneIds={setZoneIds}
               zones={catalog?.zones ?? []}
@@ -279,6 +284,8 @@ function BasicStep(props: {
   setGender: (v: Gender) => void;
   dob: string;
   setDob: (v: string) => void;
+  profilePicture: string | null;
+  setProfilePicture: (v: string | null) => void;
   zoneIds: string[];
   setZoneIds: (v: string[]) => void;
   zones: { id: string; name: string }[];
@@ -289,7 +296,12 @@ function BasicStep(props: {
     <>
       <StepHeading emoji="👋" title="Let's get to know you" sub="The basics — takes under a minute." />
 
-      <label className="mb-1.5 block text-[14px] font-semibold text-ink">What should we call you?</label>
+      <p className="mb-1.5 text-[14px] font-semibold text-ink">
+        Profile photo <span className="font-normal text-text-tertiary">· optional</span>
+      </p>
+      <ProfilePictureField value={props.profilePicture} onChange={props.setProfilePicture} />
+
+      <label className="mb-1.5 mt-6 block text-[14px] font-semibold text-ink">What should we call you?</label>
       <input
         value={props.fullName}
         onChange={(e) => props.setFullName(e.target.value)}
@@ -337,6 +349,80 @@ function BasicStep(props: {
         />
       )}
     </>
+  );
+}
+
+/** Circular avatar picker: pick → preview → upload to Cloudinary → hosted URL. */
+function ProfilePictureField({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (url: string | null) => void;
+}) {
+  const upload = useFileUpload();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+
+    setError(null);
+    setBusy(true);
+    setPreview(URL.createObjectURL(file));
+    try {
+      onChange(await upload(file, "profile_picture"));
+    } catch (err) {
+      setPreview(null);
+      onChange(null);
+      setError((err as Error)?.message ?? "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const shown = preview ?? value;
+
+  return (
+    <div className="flex items-center gap-4">
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        aria-label="Add profile photo"
+        className="relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-dashed border-border bg-cream"
+      >
+        {shown ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={shown} alt="Profile" className="h-full w-full object-cover" />
+        ) : (
+          <Camera size={22} className="text-text-secondary" />
+        )}
+        {busy ? (
+          <span className="absolute inset-0 flex items-center justify-center bg-white/70">
+            <Loader2 size={20} className="animate-spin text-ink" />
+          </span>
+        ) : null}
+        <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-white">
+          <Camera size={12} />
+        </span>
+      </button>
+      <p className="text-[12px] text-text-secondary">
+        {error ?? (shown ? "Tap to change your photo." : "A clear face photo builds trust with businesses.")}
+      </p>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={onFile}
+        className="hidden"
+      />
+    </div>
   );
 }
 
