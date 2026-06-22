@@ -19,6 +19,7 @@ export const basicInfoSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Pick your date of birth")
     .optional(),
+  profile_picture: z.string().url().optional(),
   zone_ids: z.array(z.string()).default([]),
 });
 

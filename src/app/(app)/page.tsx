@@ -69,19 +69,16 @@ function WorkerHome({
   const verified = status === "verified";
 
   return (
-    <div className="flex h-full flex-col px-6 pt-6">
-      <header className="flex shrink-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[13px] text-text-secondary">Welcome back 👋</p>
-          <h1 className="truncate text-2xl font-bold text-ink">
-            {name ?? "Find your next shift"}
-          </h1>
-        </div>
-        <NotificationBell className="mt-1 shrink-0" />
+    <div className="flex h-full flex-col px-5 pt-4">
+      <header className="flex shrink-0 items-center justify-between gap-3">
+        <h1 className="truncate text-xl font-bold text-ink">
+          {name ? `Hey, ${name} 👋` : "Find your next shift"}
+        </h1>
+        <NotificationBell className="shrink-0" />
       </header>
 
       {!verified ? (
-        <div className="pt-3">
+        <div className="pt-2.5">
           <VerificationBanner
             status={status}
             nextStep={nextStep}
@@ -90,11 +87,11 @@ function WorkerHome({
         </div>
       ) : null}
 
-      <div className="pt-3">
+      <div className="pt-2.5">
         <FilterTabs active={filter} onChange={changeFilter} />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col pt-4 pb-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-visible pt-3 pb-5">
         {isLoading ? (
           <DeckSkeleton />
         ) : isError && items.length === 0 ? (
@@ -167,10 +164,12 @@ function DeckSkeleton() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
-        <div className="absolute inset-0 animate-pulse overflow-hidden rounded-[28px] border border-border bg-surface">
-          <div className="h-[46%] bg-black/[0.06]" />
-          <div className="space-y-3 p-5">
-            <div className="h-8 w-28 rounded bg-black/[0.06]" />
+        <div className="absolute inset-0 animate-pulse overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_28px_60px_-22px_rgba(0,0,0,0.45)]">
+          <div className="h-[50%] bg-black/[0.06]" />
+          <div className="-mt-9 px-6">
+            <div className="h-16 rounded-[22px] bg-black/[0.08]" />
+          </div>
+          <div className="space-y-3 p-6 pt-4">
             <div className="grid grid-cols-2 gap-2.5">
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="h-11 rounded-2xl bg-black/[0.06]" />

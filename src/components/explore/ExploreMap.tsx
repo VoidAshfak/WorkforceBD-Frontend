@@ -171,11 +171,14 @@ export default function ExploreMap({ shifts, selectedId, onSelect }: Props) {
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
 
-      {/* Map controls */}
-      <div className="absolute right-3 top-3 flex flex-col gap-2">
+      {/* Fit-all sits top-right; locate-me lives bottom-right so it never
+          collides with the floating filter pills up top. */}
+      <div className="absolute right-3 top-3">
         <ControlButton label="Fit all shifts" onClick={() => fitToShifts(true)}>
           <Maximize2 size={18} />
         </ControlButton>
+      </div>
+      <div className="absolute bottom-24 right-3">
         <ControlButton label="My location" onClick={locateMe}>
           <LocateFixed size={18} />
         </ControlButton>

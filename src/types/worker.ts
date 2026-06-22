@@ -19,6 +19,22 @@ export type WorkerCatalog = {
   zones: CatalogItem[];
 };
 
+/**
+ * Full worker profile from `GET /worker/profile`. The account-level
+ * `full_name` on the auth user is always null — the name a worker sets during
+ * onboarding lives here, so the profile screen reads it from this shape.
+ */
+export type WorkerProfile = {
+  id: string;
+  user_id: string;
+  full_name: string | null;
+  gender: string | null;
+  date_of_birth: string | null;
+  profile_picture: string | null;
+  verification_status: string;
+  reliability_score: number | string;
+};
+
 /** Cloudinary upload purposes accepted by `/upload/presign`. */
 export type PresignPurpose =
   | "profile_picture"

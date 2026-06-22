@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/slices/authSlice";
 import { useLogoutMutation } from "@/store/api/authApi";
+import { useGetWorkerProfileQuery } from "@/store/api/workerApi";
 import type { VerificationStatus } from "@/types/auth";
 
 const STATUS_UI: Record<
@@ -24,6 +25,14 @@ export default function ProfilePage() {
   const dispatch = useAppDispatch();
   const { user, activeRole, profile } = useAppSelector((s) => s.auth);
   const [logout, { isLoading }] = useLogoutMutation();
+
+  // The auth user's `full_name` is always null — the name lives on the worker
+  // profile, so fetch it for workers and prefer it over the account field.
+  const { data: workerProfile } = useGetWorkerProfileQuery(undefined, {
+    skip: activeRole !== "worker",
+  });
+  const displayName = workerProfile?.full_name?.trim() || user?.full_name?.trim() || null;
+  const avatarUrl = workerProfile?.profile_picture ?? null;
 
   const status = profile?.verification_status ?? "unverified";
   const badge = STATUS_UI[status];
@@ -49,11 +58,16 @@ export default function ProfilePage() {
       <h1 className="text-2xl font-bold text-ink">Profile</h1>
 
       <div className="mt-6 flex items-center gap-4 rounded-2xl border border-border bg-surface p-5">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-brand text-xl font-bold text-ink">
-          {(user?.full_name?.trim()?.[0] ?? "U").toUpperCase()}
+        <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-brand text-xl font-bold text-ink">
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt={displayName ?? "Profile"} className="h-full w-full object-cover" />
+          ) : (
+            (displayName?.[0] ?? "U").toUpperCase()
+          )}
         </span>
         <div className="flex-1">
-          <p className="text-lg font-bold text-ink">{user?.full_name ?? "Add your name"}</p>
+          <p className="text-lg font-bold text-ink">{displayName ?? "Add your name"}</p>
           <p className="text-[14px] text-text-secondary">{user?.phone}</p>
         </div>
       </div>
