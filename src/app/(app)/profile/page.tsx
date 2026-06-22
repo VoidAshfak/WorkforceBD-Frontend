@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowRight, BadgeCheck, Clock, LogOut, ShieldX, Sparkles } from "lucide-react";
+import { ArrowRight, BadgeCheck, Clock, LogOut, Pencil, ShieldX, Sparkles } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -70,6 +70,16 @@ export default function ProfilePage() {
           <p className="text-lg font-bold text-ink">{displayName ?? "Add your name"}</p>
           <p className="text-[14px] text-text-secondary">{user?.phone}</p>
         </div>
+        {activeRole === "worker" ? (
+          <button
+            type="button"
+            onClick={() => router.push("/profile/edit")}
+            aria-label="Edit profile"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
+          >
+            <Pencil size={16} />
+          </button>
+        ) : null}
       </div>
 
       <div className="mt-4 flex items-center justify-between rounded-2xl border border-border bg-surface p-4">

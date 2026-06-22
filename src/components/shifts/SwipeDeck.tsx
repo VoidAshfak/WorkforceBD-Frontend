@@ -56,10 +56,13 @@ export default function SwipeDeck({
       if (!card || animating.current) return;
       if ((dir === 1 && !canNext) || (dir === -1 && !canPrev)) return snapBack(card);
 
+      // Card exits toward the finger: next is a left-drag (exits left), prev a
+      // right-drag (exits right) — i.e. opposite the navigation direction.
+      const exit = -dir;
       animating.current = true;
       gsap.to(card, {
-        x: dir * (window.innerWidth + 120),
-        rotation: dir * 14,
+        x: exit * (window.innerWidth + 120),
+        rotation: exit * 14,
         duration: 0.3,
         ease: "power2.in",
         onComplete: () => {

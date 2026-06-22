@@ -12,6 +12,25 @@ const applySchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+/** Whitelisted query params forwarded to the backend `GET /applications`. */
+const ALLOWED = ["status", "page", "limit"] as const;
+
+/**
+ * `GET /api/applications` — the worker's application tracker, newest first.
+ * Only known query params are forwarded so the backend's validator never sees
+ * unexpected input.
+ */
+export async function GET(req: NextRequest) {
+  const incoming = req.nextUrl.searchParams;
+  const params = new URLSearchParams();
+  for (const key of ALLOWED) {
+    const value = incoming.get(key);
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return proxyAuthed(req, `/applications${query ? `?${query}` : ""}`, { method: "GET" });
+}
+
 /**
  * `POST /api/applications` — apply to a shift. The backend additionally requires
  * an admin-verified worker profile and returns `403` otherwise; that message is
