@@ -31,8 +31,12 @@ export type WorkerProfile = {
   gender: string | null;
   date_of_birth: string | null;
   profile_picture: string | null;
+  availability_days: string[];
+  availability_slots: string[];
   verification_status: string;
   reliability_score: number | string;
+  worker_skills: { skill_id: string; skills: { id: string; name: string } }[];
+  worker_preferred_zones: { zone_id: string; zones: { id: string; name: string } }[];
 };
 
 /** Cloudinary upload purposes accepted by `/upload/presign`. */

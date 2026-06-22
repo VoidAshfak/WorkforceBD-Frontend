@@ -69,3 +69,40 @@ export type ShiftDashboard = {
   nearby: number;
   urgent: number;
 };
+
+/** Worker application lifecycle (see /docs/api-guidelines.md → Applications). */
+export type ApplicationStatus =
+  | "pending"
+  | "shortlisted"
+  | "accepted"
+  | "rejected"
+  | "withdrawn"
+  | "no_show";
+
+/** Trimmed shift snapshot embedded in an application row. */
+export type ApplicationShift = {
+  id: string;
+  title: string;
+  shift_date: string;
+  start_time: string;
+  end_time: string;
+  pay_amount: string;
+  status: string;
+  business_profiles: { business_name: string; logo_url: string | null };
+  zones: { name: string } | null;
+};
+
+/** Presence-proof method for shift check-in. */
+export type CheckInMethod = "gps" | "qr" | "manual";
+
+/** A worker's application as it appears in the tracker (`GET /applications`). */
+export type Application = {
+  id: string;
+  status: ApplicationStatus;
+  note: string | null;
+  applied_at: string;
+  shifts: ApplicationShift;
+  /** Attendance stamps — only present once the worker checks in/out. */
+  checked_in_at?: string | null;
+  checked_out_at?: string | null;
+};

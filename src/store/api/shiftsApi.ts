@@ -1,6 +1,10 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import type {
+  Application,
+  ApplicationStatus,
+  CheckInMethod,
+  Coordinates,
   Paginated,
   Shift,
   ShiftDashboard,
@@ -14,6 +18,13 @@ export type ShiftsQuery = {
   filter?: ShiftFilter;
   zone_id?: string;
   category_id?: string;
+  page?: number;
+  limit?: number;
+};
+
+/** Query args for the application tracker. */
+export type ApplicationsQuery = {
+  status?: ApplicationStatus;
   page?: number;
   limit?: number;
 };
@@ -61,11 +72,52 @@ export const shiftsApi = createApi({
       query: (body) => ({ url: "/applications", method: "POST", body }),
       invalidatesTags: ["Application"],
     }),
+
+    getApplications: build.query<Paginated<Application>, ApplicationsQuery>({
+      query: (args) => ({ url: "/applications", method: "GET", params: cleanParams(args) }),
+      transformResponse: (res: ApiEnvelope<Paginated<Application>>) => res.data,
+      // One cache entry per status filter (page excluded) so paging accumulates
+      // into a single growing list for "Load more".
+      serializeQueryArgs: ({ queryArgs }) => ({ status: queryArgs.status }),
+      merge: (current, incoming, { arg }) => {
+        if ((arg.page ?? 1) <= 1) return incoming;
+        current.items.push(...incoming.items);
+        current.pagination = incoming.pagination;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.page !== previousArg?.page,
+      providesTags: ["Application"],
+    }),
+
+    withdrawApplication: build.mutation<{ message: string }, string>({
+      query: (id) => ({ url: `/applications/${id}/withdraw`, method: "PATCH" }),
+      invalidatesTags: ["Application"],
+    }),
+
+    // Check-in/out don't change the application's status (stays `accepted`), so
+    // they skip cache invalidation — the card tracks attendance state locally
+    // from each mutation's result.
+    checkIn: build.mutation<
+      { id: string; checked_in_at: string; checkin_method: CheckInMethod },
+      { id: string; method: CheckInMethod; coordinates?: Coordinates; qr_token?: string }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/applications/${id}/check-in`,
+        method: "POST",
+        body,
+      }),
+      transformResponse: (res: ApiEnvelope<{ id: string; checked_in_at: string; checkin_method: CheckInMethod }>) =>
+        res.data,
+    }),
+
+    checkOut: build.mutation<{ id: string; checked_out_at: string }, string>({
+      query: (id) => ({ url: `/applications/${id}/check-out`, method: "POST" }),
+      transformResponse: (res: ApiEnvelope<{ id: string; checked_out_at: string }>) => res.data,
+    }),
   }),
 });
 
 /** Drops undefined/empty values so the URL only carries real filters. */
-function cleanParams(args: ShiftsQuery): Record<string, string | number> {
+function cleanParams(args: ShiftsQuery | ApplicationsQuery): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(args)) {
     if (value !== undefined && value !== "") out[key] = value;
@@ -78,4 +130,8 @@ export const {
   useGetShiftsQuery,
   useGetShiftQuery,
   useApplyToShiftMutation,
+  useGetApplicationsQuery,
+  useWithdrawApplicationMutation,
+  useCheckInMutation,
+  useCheckOutMutation,
 } = shiftsApi;

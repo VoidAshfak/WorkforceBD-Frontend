@@ -14,8 +14,13 @@ function isActive(href: string, pathname: string): boolean {
  * Universal mobile bottom navigation. Fixed to the viewport bottom, thumb-friendly
  * 56px+ touch targets, active tab anchored by a brand-yellow indicator.
  */
+/** Focused sub-screens that hide the nav for an immersive, full-height flow. */
+const HIDDEN_ON = ["/profile/edit"];
+
 export default function BottomNav() {
   const pathname = usePathname();
+
+  if (HIDDEN_ON.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return null;
 
   return (
     <nav
