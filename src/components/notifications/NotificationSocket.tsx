@@ -5,13 +5,17 @@ import { io, type Socket } from "socket.io-client";
 
 import { useAppDispatch } from "@/store/hooks";
 import { notificationsApi } from "@/store/api/notificationsApi";
+import { chatApi } from "@/store/api/chatApi";
 import { fetchSocketTicket, SOCKET_URL } from "@/lib/realtime";
 import { createLogger } from "@/lib/logger";
 import type { AppNotification } from "@/types/notification";
+import type { ChatMessage } from "@/types/chat";
 
 const log = createLogger("notif-socket");
 
 type NewNotification = { notification: AppNotification; unread_count: number };
+type ChatMessageEvent = { conversation_id: string; message: ChatMessage };
+type ChatReadEvent = { conversation_id: string; read_at: string };
 
 /**
  * Live notification bridge. Connects to the Socket.IO server with a short-lived
@@ -63,6 +67,31 @@ export default function NotificationSocket() {
           }),
         );
       }
+    });
+
+    // Live chat: fold a new message into the open thread (newest-first) and
+    // refresh the badge/inbox. No-op when the thread isn't mounted.
+    socket.on("chat:message", ({ conversation_id, message }: ChatMessageEvent) => {
+      if (!active) return;
+      dispatch(
+        chatApi.util.updateQueryData("getMessages", { id: conversation_id }, (draft) => {
+          if (draft.items.some((m) => m.id === message.id)) return; // dedupe
+          draft.items.unshift(message);
+        }),
+      );
+      dispatch(chatApi.util.invalidateTags(["ChatUnread", "ChatInbox"]));
+    });
+
+    // Read receipt: flip our own sent messages to read in the open thread.
+    socket.on("chat:read", ({ conversation_id, read_at }: ChatReadEvent) => {
+      if (!active) return;
+      dispatch(
+        chatApi.util.updateQueryData("getMessages", { id: conversation_id }, (draft) => {
+          for (const m of draft.items) {
+            if (m.sender_role === draft.conversation.side && !m.read_at) m.read_at = read_at;
+          }
+        }),
+      );
     });
 
     return () => {

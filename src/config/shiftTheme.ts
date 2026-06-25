@@ -14,19 +14,21 @@ export type CardTheme = {
   blob: string;
   /** Secondary blob fill. */
   blobAlt: string;
+  /** Saturated accent used for the glow halo behind the card. */
+  glow: string;
 };
 
 const THEMES: CardTheme[] = [
   // Brand yellow
-  { gradient: "linear-gradient(150deg, #FFE27A 0%, #FFC629 100%)", blob: "#FFF7DE", blobAlt: "#FFD95C" },
+  { gradient: "linear-gradient(150deg, #FFE27A 0%, #FFC629 100%)", blob: "#FFF7DE", blobAlt: "#FFD95C", glow: "#FFC629" },
   // Mint / emerald
-  { gradient: "linear-gradient(150deg, #9DE9C0 0%, #1A964A 100%)", blob: "#E4FBEF", blobAlt: "#5FCB92" },
+  { gradient: "linear-gradient(150deg, #9DE9C0 0%, #1A964A 100%)", blob: "#E4FBEF", blobAlt: "#5FCB92", glow: "#22B25C" },
   // Sky blue
-  { gradient: "linear-gradient(150deg, #BFE4FF 0%, #1F98F9 100%)", blob: "#EAF6FF", blobAlt: "#6FC0FF" },
+  { gradient: "linear-gradient(150deg, #BFE4FF 0%, #1F98F9 100%)", blob: "#EAF6FF", blobAlt: "#6FC0FF", glow: "#1F98F9" },
   // Warm coral
-  { gradient: "linear-gradient(150deg, #FFC2A8 0%, #FF7A4D 100%)", blob: "#FFEDE3", blobAlt: "#FF9D78" },
+  { gradient: "linear-gradient(150deg, #FFC2A8 0%, #FF7A4D 100%)", blob: "#FFEDE3", blobAlt: "#FF9D78", glow: "#FF7A4D" },
   // Lavender
-  { gradient: "linear-gradient(150deg, #D9C8FF 0%, #8B5CF6 100%)", blob: "#F1EBFF", blobAlt: "#B79BFF" },
+  { gradient: "linear-gradient(150deg, #D9C8FF 0%, #8B5CF6 100%)", blob: "#F1EBFF", blobAlt: "#B79BFF", glow: "#8B5CF6" },
 ];
 
 /** Stable hash so a given shift always gets the same theme across renders. */

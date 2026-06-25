@@ -4,6 +4,7 @@ import { authApi } from "@/store/api/authApi";
 import { workerApi } from "@/store/api/workerApi";
 import { shiftsApi } from "@/store/api/shiftsApi";
 import { notificationsApi } from "@/store/api/notificationsApi";
+import { chatApi } from "@/store/api/chatApi";
 import authReducer from "@/store/slices/authSlice";
 
 export const makeStore = () =>
@@ -14,6 +15,7 @@ export const makeStore = () =>
       [workerApi.reducerPath]: workerApi.reducer,
       [shiftsApi.reducerPath]: shiftsApi.reducer,
       [notificationsApi.reducerPath]: notificationsApi.reducer,
+      [chatApi.reducerPath]: chatApi.reducer,
     },
     middleware: (getDefault) =>
       getDefault().concat(
@@ -21,6 +23,7 @@ export const makeStore = () =>
         workerApi.middleware,
         shiftsApi.middleware,
         notificationsApi.middleware,
+        chatApi.middleware,
       ),
   });
 

@@ -6,7 +6,14 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { LocateFixed, Maximize2 } from "lucide-react";
 
 import { gsap } from "@/lib/gsap";
-import { DHAKA_CENTER, shiftLatLng, type LngLat } from "@/lib/geo";
+import {
+  currentLngLat,
+  DHAKA_CENTER,
+  fetchRoute,
+  shiftLatLng,
+  type LngLat,
+  type RouteStatus,
+} from "@/lib/geo";
 import { formatTaka } from "@/lib/format";
 import { shiftEmoji } from "@/config/shiftTheme";
 import type { Shift } from "@/types/shift";
@@ -19,7 +26,38 @@ type Props = {
   shifts: Shift[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Shift to draw a current-location → shift driving route to; null clears it. */
+  directionsId: string | null;
+  /** Reports route progress so the parent can show it in the sheet/floating bar. */
+  onRouteStatus: (status: RouteStatus | null) => void;
 };
+
+const ROUTE_SOURCE = "wf-route";
+const ROUTE_SHIMMER = "wf-route-flow";
+
+// Dash patterns cycled over time to make a bright dash "flow" along the route —
+// a shimmer that reads as movement toward the destination. (Mapbox ant-trail.)
+const DASH_SEQUENCE: number[][] = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
+
+/** Returns `true` when this is the worker's own accepted (hired) shift. */
+function isAccepted(shift: Shift): boolean {
+  return shift.my_application?.status === "accepted";
+}
 
 /**
  * Interactive shift map. Each shift drops a brand pin (its pay) at its zone
@@ -27,15 +65,25 @@ type Props = {
  * fit-to-shifts and locate-me controls. MapLibre is browser-only — load this via
  * `next/dynamic({ ssr: false })`.
  */
-export default function ExploreMap({ shifts, selectedId, onSelect }: Props) {
+export default function ExploreMap({
+  shifts,
+  selectedId,
+  onSelect,
+  directionsId,
+  onRouteStatus,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const readyRef = useRef(false);
   const markersRef = useRef<Map<string, { marker: maplibregl.Marker; el: HTMLElement }>>(new Map());
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const routeAnimRef = useRef<number | null>(null);
   // Latest onSelect without re-binding map listeners.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  // Latest status reporter, so the directions effect needn't list it as a dep.
+  const onRouteStatusRef = useRef(onRouteStatus);
+  onRouteStatusRef.current = onRouteStatus;
 
   // --- create the map once ---
   useEffect(() => {
@@ -62,6 +110,8 @@ export default function ExploreMap({ shifts, selectedId, onSelect }: Props) {
     });
 
     return () => {
+      if (routeAnimRef.current) cancelAnimationFrame(routeAnimRef.current);
+      routeAnimRef.current = null;
       markers.forEach(({ marker }) => marker.remove());
       markers.clear();
       map.remove();
@@ -108,6 +158,53 @@ export default function ExploreMap({ shifts, selectedId, onSelect }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
+  // --- draw / clear the directions route ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+
+    const report = onRouteStatusRef.current;
+
+    if (!directionsId) {
+      clearRoute();
+      return;
+    }
+
+    const target = shifts.find((s) => s.id === directionsId);
+    if (!target) return;
+
+    let cancelled = false;
+    report({ state: "loading" });
+
+    (async () => {
+      try {
+        const origin = await currentLngLat();
+        if (cancelled) return;
+        ensureUserDot(origin);
+        const dest = shiftLatLng(target);
+        const r = await fetchRoute(origin, dest);
+        if (cancelled) return;
+        drawRoute(r.coordinates);
+        fitToRoute(r.coordinates);
+        report({
+          state: "ready",
+          distanceM: r.distanceM,
+          durationS: r.durationS,
+          fallback: r.durationS === 0,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        clearRoute();
+        report({ state: "error", message: (err as Error)?.message ?? "Couldn't get directions." });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directionsId, shifts]);
+
   function syncMarkers() {
     const map = mapRef.current;
     if (!map) return;
@@ -147,24 +244,116 @@ export default function ExploreMap({ shifts, selectedId, onSelect }: Props) {
     map.fitBounds(bounds, { padding: { top: 90, bottom: 200, left: 60, right: 60 }, maxZoom: 15, duration: animate ? 600 : 0 });
   }
 
+  /** Drops (or moves) the blue "you are here" dot at a position. */
+  function ensureUserDot(at: LngLat) {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!userMarkerRef.current) {
+      const dot = document.createElement("div");
+      dot.className = "wf-user-dot";
+      userMarkerRef.current = new maplibregl.Marker({ element: dot }).setLngLat(at).addTo(map);
+    } else {
+      userMarkerRef.current.setLngLat(at);
+    }
+  }
+
   function locateMe() {
     const map = mapRef.current;
     if (!map || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const at: LngLat = [pos.coords.longitude, pos.coords.latitude];
-        if (!userMarkerRef.current) {
-          const dot = document.createElement("div");
-          dot.className = "wf-user-dot";
-          userMarkerRef.current = new maplibregl.Marker({ element: dot }).setLngLat(at).addTo(map);
-        } else {
-          userMarkerRef.current.setLngLat(at);
-        }
+        ensureUserDot(at);
         map.flyTo({ center: at, zoom: 14, duration: 700 });
       },
       () => {},
       { enableHighAccuracy: true, timeout: 8000 },
     );
+  }
+
+  /** Draws (or updates) the directions polyline as a cased line under the pins. */
+  function drawRoute(coords: LngLat[]) {
+    const map = mapRef.current;
+    if (!map) return;
+    const data: GeoJSON.Feature = {
+      type: "Feature",
+      properties: {},
+      geometry: { type: "LineString", coordinates: coords },
+    };
+    const src = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData(data);
+      return;
+    }
+    map.addSource(ROUTE_SOURCE, { type: "geojson", data });
+    map.addLayer({
+      id: "wf-route-casing",
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.9 },
+    });
+    map.addLayer({
+      id: "wf-route-line",
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#1f98f9", "line-width": 5 },
+    });
+    // Bright dashed overlay whose dashes flow along the route — the shimmer.
+    map.addLayer({
+      id: ROUTE_SHIMMER,
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: { "line-color": "#eaf6ff", "line-width": 3.5, "line-dasharray": [0, 4, 3] },
+    });
+    startShimmer();
+  }
+
+  /** Drives the flowing-dash shimmer by cycling `line-dasharray` over time. */
+  function startShimmer() {
+    let step = 0;
+    const tick = (t: number) => {
+      const map = mapRef.current;
+      if (!map || !map.getLayer(ROUTE_SHIMMER)) {
+        routeAnimRef.current = null;
+        return;
+      }
+      const next = Math.floor((t / 45) % DASH_SEQUENCE.length);
+      if (next !== step) {
+        map.setPaintProperty(ROUTE_SHIMMER, "line-dasharray", DASH_SEQUENCE[step]);
+        step = next;
+      }
+      routeAnimRef.current = requestAnimationFrame(tick);
+    };
+    if (routeAnimRef.current) cancelAnimationFrame(routeAnimRef.current);
+    routeAnimRef.current = requestAnimationFrame(tick);
+  }
+
+  function clearRoute() {
+    if (routeAnimRef.current) {
+      cancelAnimationFrame(routeAnimRef.current);
+      routeAnimRef.current = null;
+    }
+    const map = mapRef.current;
+    if (!map) return;
+    for (const id of [ROUTE_SHIMMER, "wf-route-line", "wf-route-casing"]) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+    if (map.getSource(ROUTE_SOURCE)) map.removeSource(ROUTE_SOURCE);
+  }
+
+  function fitToRoute(coords: LngLat[]) {
+    const map = mapRef.current;
+    if (!map || coords.length === 0) return;
+    const bounds = new maplibregl.LngLatBounds();
+    coords.forEach((c) => bounds.extend(c));
+    map.fitBounds(bounds, {
+      padding: { top: 90, bottom: 280, left: 60, right: 60 },
+      maxZoom: 15,
+      duration: 600,
+    });
   }
 
   return (
@@ -212,15 +401,20 @@ function ControlButton({
 
 /** Builds the DOM element used as a MapLibre marker for a shift. */
 function buildPin(shift: Shift): HTMLElement {
+  const accepted = isAccepted(shift);
   const el = document.createElement("button");
   el.type = "button";
-  el.className = "wf-pin";
-  el.setAttribute("aria-label", `${shift.title} — ${formatTaka(shift.pay_amount)}`);
+  el.className = accepted ? "wf-pin wf-pin--accepted" : "wf-pin";
+  el.setAttribute(
+    "aria-label",
+    `${shift.title} — ${formatTaka(shift.pay_amount)}${accepted ? " — your accepted shift" : ""}`,
+  );
   el.innerHTML = `
     <span class="wf-pin-body">
       <span class="wf-pin-emoji">${shiftEmoji(shift)}</span>
       <span class="wf-pin-pay">${formatTaka(shift.pay_amount)}</span>
     </span>
+    ${accepted ? '<span class="wf-pin-badge">✓</span>' : ""}
     <span class="wf-pin-tail"></span>
   `;
   return el;
@@ -290,6 +484,36 @@ function PinStyles() {
         border-right: 2px solid #202020;
         border-bottom: 2px solid #202020;
         transform: translateX(-50%) rotate(45deg);
+      }
+      .wf-pin--accepted .wf-pin-body {
+        background: var(--color-emerald, #1f9d57);
+        border-color: #0c5e34;
+      }
+      .wf-pin--accepted .wf-pin-pay,
+      .wf-pin--accepted .wf-pin-emoji {
+        color: #fff;
+      }
+      .wf-pin--accepted .wf-pin-tail {
+        background: var(--color-emerald, #1f9d57);
+        border-color: #0c5e34;
+      }
+      .wf-pin-badge {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: #fff;
+        color: #0c5e34;
+        font-size: 11px;
+        font-weight: 900;
+        line-height: 1;
+        border: 2px solid #0c5e34;
+        box-shadow: 0 2px 6px -2px rgba(0, 0, 0, 0.5);
       }
       .wf-pin.is-selected {
         z-index: 5;

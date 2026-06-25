@@ -1494,15 +1494,40 @@ On connect, the socket auto-joins a private room (`user:<id>`) — events are de
 | Event | Payload | When |
 |---|---|---|
 | `notification:new` | `{ notification, unread_count }` | Any new notification for this user (verification decision, hire/reject, shift moderation, …) |
+| `chat:message` | `{ conversation_id, message }` | The counterpart sent a new chat message in a conversation this user is in |
+| `chat:read` | `{ conversation_id, reader_role, read_at, count }` | The counterpart opened/marked the thread read — update your sent-message read receipts |
 
-`notification` matches the shape returned by `GET /notifications`. `unread_count` is the user's fresh total — bind it straight to the badge.
+`notification` matches the shape returned by `GET /notifications`. `unread_count` is the user's fresh total — bind it straight to the badge. `message` matches an item from `GET /chat/conversations/:id/messages`; see [Chat](#chat).
+
+`chat:message` is delivered to **both** participants — the recipient sees it arrive, and the sender's other tabs/devices stay in sync. Dedupe by `message.id` (the originating client also has it from the REST response or socket ack).
 
 ```js
 socket.on("notification:new", ({ notification, unread_count }) => {
   showToast(notification.title, notification.body);
   setBadge(unread_count);
 });
+
+socket.on("chat:message", ({ conversation_id, message }) => upsertMessage(conversation_id, message)); // dedupe by message.id
+socket.on("chat:read", ({ conversation_id, read_at }) => markSentAsRead(conversation_id, read_at));
 ```
+
+### Events (client → server)
+
+Chat can also be **sent over the socket** (lower latency than REST, same service logic and auth). Each event takes an optional ack callback that resolves with the result.
+
+| Event | Payload | Ack |
+|---|---|---|
+| `chat:send` | `{ conversation_id, body }` | `{ ok: true, message }` or `{ ok: false, error }` |
+| `chat:read` | `{ conversation_id }` | `{ ok: true, updated }` or `{ ok: false, error }` |
+
+```js
+socket.emit("chat:send", { conversation_id, body: "On my way" }, (res) => {
+  if (!res.ok) return showError(res.error);   // e.g. "Conversation not found", body too long
+  appendOwnMessage(res.message);              // server-confirmed message (has id, created_at)
+});
+```
+
+Same participant + length checks as the REST endpoints. `body` is 1–2000 chars (trimmed); an invalid/foreign `conversation_id` returns `{ ok: false, error: "Conversation not found" }`. The persisted message is broadcast via `chat:message` to both sides as above. REST (`POST /chat/conversations/:id/messages`) remains available and equivalent — pick one per client.
 
 ### Notes
 - **Auth expiry:** the ticket is verified once at handshake; an active connection survives ticket expiry. On reconnect, fetch a fresh ticket first (`socket.auth.token = await fetchSocketTicket(); socket.disconnect().connect()`). Access-token refresh does not require a socket reconnect.
@@ -1582,6 +1607,141 @@ Marks a single owned notification as read (idempotent).
 **Response `200`** — the updated notification.
 
 **Errors:** `404 Notification not found` (missing or not owned), `422` (invalid id).
+
+---
+
+## Chat
+
+Direct messaging between a worker and a business, **scoped per shift**. A conversation is keyed by `(shift_id, worker_profile_id)` — one thread per worker per shift — and the business side is derived from the shift's owner. New messages and read receipts are pushed live over [Socket.IO](#real-time-socketio) (`chat:message`, `chat:read`); REST stays the source of truth for history and backfill.
+
+Base path: `/api/v1/chat`. Requires `Authorization: Bearer <access_token>`. Every endpoint resolves the caller's **side** (`worker` or `business`) from their profile and rejects non-participants.
+
+**Access gate:** a conversation can only be opened once an **application exists** for that `(shift, worker)` pair (any status — `pending`…`withdrawn`). No cold-messaging. Because applying requires a verified worker and posting a shift requires a verified business, both participants are implicitly verified.
+
+A `message` carries: `id`, `conversation_id`, `sender_user_id`, `sender_role` (`worker` · `business`), `body`, `read_at` (null until the recipient reads it), `created_at`.
+
+A `conversation` is returned from the **viewer's perspective**: `id`, `side` (the caller's role), `shift` (`{ id, title, shift_date }`), `counterpart` (`{ type, id, name, avatar }`), `last_message` (`{ text, at, sender_role }` or null), `unread_count`, `created_at`.
+
+---
+
+### POST `/chat/conversations`
+
+Opens — or returns the existing — conversation for a `(shift, worker)` pair. Idempotent: calling again returns the same thread. A worker caller opens their own thread (`worker_profile_id` is ignored); a business caller must own the shift and name the worker via `worker_profile_id`.
+
+| Field | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `shift_id` | body | uuid | yes | The shift the thread is scoped to |
+| `worker_profile_id` | body | uuid | business only | Required when the caller is the shift's business; ignored for a worker caller |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Conversation ready",
+  "data": {
+    "id": "uuid",
+    "side": "worker",
+    "shift": { "id": "uuid", "title": "Banquet Waiters Needed", "shift_date": "2026-06-30" },
+    "counterpart": { "type": "business", "id": "uuid", "name": "Grand Palace", "avatar": "https://…" },
+    "last_message": null,
+    "unread_count": 0,
+    "created_at": "2026-06-26T09:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `404 Shift not found`; `403 You are not a participant of this shift`; `403 A conversation is only available after the worker applies to this shift` (no application gate); `422` (`worker_profile_id is required to message a worker`, or invalid body).
+
+---
+
+### GET `/chat/conversations`
+
+Paginated inbox of the caller's conversations, most-recent activity first. Spans both sides for a user who is both a worker and a business.
+
+| Param | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `page` | query | int | — | default 1 |
+| `limit` | query | int | — | default 20, max 50 |
+
+**Response `200`** — `data.items` is an array of conversation objects (shape above, each with its own `side` and `unread_count`), plus `data.pagination`.
+
+---
+
+### GET `/chat/conversations/:id/messages`
+
+Message history for a conversation, **newest first**. Fetching marks incoming (counterpart-sent) messages as read and emits a `chat:read` receipt to the counterpart.
+
+| Param | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `id` | path | uuid | yes | Conversation id |
+| `page` | query | int | — | default 1 |
+| `limit` | query | int | — | default 30, max 50 |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Messages fetched",
+  "data": {
+    "conversation": { "id": "uuid", "side": "worker", "shift": { "…": "…" }, "counterpart": { "…": "…" }, "last_message": { "…": "…" }, "unread_count": 0, "created_at": "…" },
+    "items": [
+      {
+        "id": "uuid",
+        "conversation_id": "uuid",
+        "sender_user_id": "uuid",
+        "sender_role": "business",
+        "body": "Can you arrive 30 min early?",
+        "read_at": "2026-06-26T09:05:00.000Z",
+        "created_at": "2026-06-26T09:01:00.000Z"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 30, "total": 4, "total_pages": 1 }
+  }
+}
+```
+
+**Errors:** `404 Conversation not found` (missing or caller is not a participant), `422` (invalid id).
+
+---
+
+### POST `/chat/conversations/:id/messages`
+
+Sends a message. Persists it, updates the conversation preview, and pushes `chat:message` to both participants in real time. Equivalent to the `chat:send` socket event ([client → server](#events-client--server)) — use either.
+
+| Field | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `id` | path | uuid | yes | Conversation id |
+| `body` | body | string | yes | 1–2000 chars, trimmed |
+
+**Response `201`** — the created `message` object.
+
+**Errors:** `404 Conversation not found` (missing or not a participant); `422` (`Message body is required`, body too long, or invalid id).
+
+---
+
+### PATCH `/chat/conversations/:id/read`
+
+Marks all incoming messages in the conversation as read and emits `chat:read` to the counterpart. Idempotent.
+
+**Response `200`**
+```json
+{ "success": true, "message": "Conversation marked read", "data": { "updated": 2 } }
+```
+
+`updated` is the number of messages flipped to read (0 if already current).
+
+**Errors:** `404 Conversation not found` (missing or not a participant), `422` (invalid id).
+
+---
+
+### GET `/chat/unread-count`
+
+Total unread messages across all the caller's conversations — bind to the chat badge.
+
+**Response `200`**
+```json
+{ "success": true, "message": "Unread count fetched", "data": { "unread_count": 5 } }
+```
 
 ---
 

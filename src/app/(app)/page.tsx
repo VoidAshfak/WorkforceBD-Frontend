@@ -6,7 +6,6 @@ import { Briefcase, Clock, Compass, RefreshCw, Sparkles } from "lucide-react";
 
 import FilterTabs from "@/components/shifts/FilterTabs";
 import SwipeDeck from "@/components/shifts/SwipeDeck";
-import NotificationBell from "@/components/notifications/NotificationBell";
 import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
 import { useAppSelector } from "@/store/hooks";
 import { useGetShiftsQuery } from "@/store/api/shiftsApi";
@@ -70,11 +69,10 @@ function WorkerHome({
 
   return (
     <div className="flex h-full flex-col px-5 pt-4">
-      <header className="flex shrink-0 items-center justify-between gap-3">
+      <header className="shrink-0">
         <h1 className="truncate text-xl font-bold text-ink">
           {name ? `Hey, ${name} 👋` : "Find your next shift"}
         </h1>
-        <NotificationBell className="shrink-0" />
       </header>
 
       {!verified ? (
@@ -103,6 +101,7 @@ function WorkerHome({
             items={items}
             hasMore={hasMore}
             isFetching={isFetching}
+            verified={verified}
             onNeedMore={() => setPage((p) => p + 1)}
           />
         ) : (

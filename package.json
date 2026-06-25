@@ -12,6 +12,7 @@
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^5.4.0",
     "@reduxjs/toolkit": "^2.12.0",
+    "@yudiel/react-qr-scanner": "^2.6.0",
     "gsap": "^3.15.0",
     "lucide-react": "^1.21.0",
     "maplibre-gl": "^5.24.0",
