@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
+import ApplicationDetail from "@/components/shifts/ApplicationDetail";
 import Button from "@/components/ui/Button";
 import { useAppSelector } from "@/store/hooks";
 import { useApplyToShiftMutation, useGetShiftQuery } from "@/store/api/shiftsApi";
@@ -31,30 +32,40 @@ export default function ShiftDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: shift, isLoading, isError } = useGetShiftQuery(id);
 
+  // The applied view is built to fit the frame exactly (drawers hold the depth),
+  // so it gets a non-scrolling full-height column; everything else scrolls.
+  const fitToScreen = !isLoading && !isError && shift?.has_applied;
+
   return (
-    <div className="min-h-full px-6 py-6">
+    <div className="flex h-full flex-col px-6 pt-6">
       <button
         type="button"
         onClick={() => router.back()}
-        className="mb-4 flex h-9 w-9 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
+        className="mb-4 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
         aria-label="Back"
       >
         <ArrowLeft size={18} />
       </button>
 
-      {isLoading ? (
-        <DetailSkeleton />
-      ) : isError || !shift ? (
-        <div className="flex flex-col items-center gap-3 py-20 text-center">
-          <p className="text-[15px] font-semibold text-ink">Shift not found</p>
-          <p className="text-[14px] text-text-secondary">It may have been filled or removed.</p>
-          <Button variant="secondary" onClick={() => router.push("/explore")} className="mt-2">
-            Back to explore
-          </Button>
-        </div>
-      ) : (
-        <ShiftDetail shift={shift} />
-      )}
+      <div
+        className={`min-h-0 flex-1 ${fitToScreen ? "pb-6" : "overflow-y-auto pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}
+      >
+        {isLoading ? (
+          <DetailSkeleton />
+        ) : isError || !shift ? (
+          <div className="flex flex-col items-center gap-3 py-20 text-center">
+            <p className="text-[15px] font-semibold text-ink">Shift not found</p>
+            <p className="text-[14px] text-text-secondary">It may have been filled or removed.</p>
+            <Button variant="secondary" onClick={() => router.push("/explore")} className="mt-2">
+              Back to explore
+            </Button>
+          </div>
+        ) : shift.has_applied ? (
+          <ApplicationDetail shift={shift} />
+        ) : (
+          <ShiftDetail shift={shift} />
+        )}
+      </div>
     </div>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import SwipeCard from "@/components/shifts/SwipeCard";
+import { cardTheme } from "@/config/shiftTheme";
 import { Draggable, gsap, useGSAP } from "@/lib/gsap";
 import type { Shift } from "@/types/shift";
 
@@ -92,7 +93,11 @@ export default function SwipeDeck({
   // capture stale `go`/`canNext`/`canPrev`, or force the entrance animation to
   // replay every time fetch state flips — the source of the swap flicker.
   const liveRef = useRef({ go, canNext, canPrev, current });
-  liveRef.current = { go, canNext, canPrev, current };
+  // Written in an effect (not during render) — the drag handlers only read it at
+  // event time, long after this commits.
+  useEffect(() => {
+    liveRef.current = { go, canNext, canPrev, current };
+  });
 
   /** Reveal the behind card matching the drag: next on a left-drag, prev on a
    *  right-drag — so whichever card slides to the front was the one peeking. */
@@ -170,6 +175,14 @@ export default function SwipeDeck({
     <div ref={scope} className="flex min-h-0 flex-1 flex-col">
       {/* Card stack — fills the height; cards fan out behind like playing cards. */}
       <div className="relative min-h-0 flex-1">
+        {/* Theme-matched glow halo behind the deck. Soft blurred wash in the
+            current card's accent color; crossfades as you swipe between cards. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[78%] w-[82%] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-60 blur-[64px] transition-colors duration-500"
+          style={{ backgroundColor: cardTheme(current.id).glow }}
+        />
+
         {/* Deepest layer: a static card silhouette tilted the opposite way so
             the pile reads as three stacked cards. Purely decorative. */}
         {next || prev ? (

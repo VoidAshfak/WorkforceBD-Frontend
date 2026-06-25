@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -21,62 +21,74 @@ import {
 } from "lucide-react";
 
 import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import CheckInSheet from "@/components/shifts/CheckInSheet";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
+import { gsap, useGSAP } from "@/lib/gsap";
 import { useAppSelector } from "@/store/hooks";
 import {
-  useCheckInMutation,
   useCheckOutMutation,
   useGetApplicationsQuery,
   useWithdrawApplicationMutation,
 } from "@/store/api/shiftsApi";
 import { formatInstantTime, formatRelativeTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
-import type { Application, ApplicationStatus, Coordinates } from "@/types/shift";
-
-/** Reads the device's current position for GPS check-in. */
-function getPosition(): Promise<Coordinates> {
-  return new Promise((resolve, reject) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("Location isn't available on this device"));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        resolve({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          // Backend rejects accuracy worse than 100m; send it so it can guard.
-          accuracy: pos.coords.accuracy,
-        }),
-      (err) =>
-        reject(
-          new Error(
-            err.code === err.PERMISSION_DENIED
-              ? "Enable location access to check in"
-              : "Couldn't get your location. Try again.",
-          ),
-        ),
-      { enableHighAccuracy: true, timeout: 10_000 },
-    );
-  });
-}
+import type { Application, ApplicationStatus } from "@/types/shift";
 
 /** Pulls a human message off an RTK error, with a fallback. */
 function errMessage(err: unknown, fallback: string): string {
   return (err as { data?: { message?: string } })?.data?.message ?? (err as Error)?.message ?? fallback;
 }
 
-/** Visual treatment + label per application status. */
+/**
+ * Visual treatment per application status: `className` styles the badge pill,
+ * `accent` paints the card's left status rail, `ring` tints the avatar ring.
+ */
 const STATUS_UI: Record<
   ApplicationStatus,
-  { label: string; className: string; icon: typeof BadgeCheck }
+  { label: string; className: string; accent: string; ring: string; icon: typeof BadgeCheck }
 > = {
-  pending: { label: "Pending", className: "bg-warning/20 text-text-muted", icon: Hourglass },
-  shortlisted: { label: "Shortlisted", className: "bg-sky/15 text-sky", icon: Star },
-  accepted: { label: "Accepted", className: "bg-emerald/10 text-emerald", icon: BadgeCheck },
-  rejected: { label: "Not selected", className: "bg-danger/10 text-danger", icon: XCircle },
-  withdrawn: { label: "Withdrawn", className: "bg-black/5 text-text-secondary", icon: XCircle },
-  no_show: { label: "No show", className: "bg-danger/10 text-danger", icon: UserX },
+  pending: {
+    label: "Pending",
+    className: "bg-warning/20 text-text-muted",
+    accent: "bg-warning",
+    ring: "ring-warning/40",
+    icon: Hourglass,
+  },
+  shortlisted: {
+    label: "Shortlisted",
+    className: "bg-sky/15 text-sky",
+    accent: "bg-sky",
+    ring: "ring-sky/40",
+    icon: Star,
+  },
+  accepted: {
+    label: "Accepted",
+    className: "bg-emerald/10 text-emerald",
+    accent: "bg-emerald",
+    ring: "ring-emerald/50",
+    icon: BadgeCheck,
+  },
+  rejected: {
+    label: "Not selected",
+    className: "bg-danger/10 text-danger",
+    accent: "bg-danger",
+    ring: "ring-danger/40",
+    icon: XCircle,
+  },
+  withdrawn: {
+    label: "Withdrawn",
+    className: "bg-black/5 text-text-secondary",
+    accent: "bg-text-tertiary",
+    ring: "ring-black/10",
+    icon: XCircle,
+  },
+  no_show: {
+    label: "No show",
+    className: "bg-danger/10 text-danger",
+    accent: "bg-danger",
+    ring: "ring-danger/40",
+    icon: UserX,
+  },
 };
 
 /** Tracker filter pills — `value: undefined` is the "All" tab. */
@@ -132,7 +144,22 @@ function WorkerActivity() {
   const hasMore = data ? data.pagination.page < data.pagination.total_pages : false;
 
   return (
-    <div className="flex h-full flex-col px-5 pt-4">
+    <div className="relative flex h-full flex-col overflow-hidden px-5 pt-4">
+      {/* Decorative branded backdrop — warm gradient wash + soft blobs so the
+          cards float above a lively surface instead of flat background. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-brand-light/60 via-background to-background"
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -right-16 -top-20 -z-10 h-56 w-56 rounded-full bg-brand/25 blur-3xl"
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -left-20 top-24 -z-10 h-48 w-48 rounded-full bg-sky/15 blur-3xl"
+      />
+
       <header className="shrink-0">
         <h1 className="text-xl font-bold text-ink">Activity</h1>
         <p className="text-[13px] text-text-secondary">Track every shift you&apos;ve applied to.</p>
@@ -167,8 +194,8 @@ function WorkerActivity() {
           <EmptyState filtered={Boolean(status)} />
         ) : (
           <div className="space-y-3">
-            {items.map((app) => (
-              <ApplicationCard key={app.id} app={app} />
+            {items.map((app, i) => (
+              <ApplicationCard key={app.id} app={app} index={i} />
             ))}
 
             {hasMore ? (
@@ -189,10 +216,10 @@ function WorkerActivity() {
   );
 }
 
-function ApplicationCard({ app }: { app: Application }) {
+function ApplicationCard({ app, index }: { app: Application; index: number }) {
   const router = useRouter();
+  const cardRef = useRef<HTMLButtonElement>(null);
   const [withdraw, { isLoading: withdrawing }] = useWithdrawApplicationMutation();
-  const [checkIn, { isLoading: checkingIn }] = useCheckInMutation();
   const [checkOut, { isLoading: checkingOut }] = useCheckOutMutation();
 
   // Attendance is tracked locally: it's seeded from the row (if the API sends
@@ -202,12 +229,28 @@ function ApplicationCard({ app }: { app: Application }) {
   const [checkedOutAt, setCheckedOutAt] = useState<string | null>(app.checked_out_at ?? null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [checkInOpen, setCheckInOpen] = useState(false);
 
   const shift = app.shifts;
   const badge = STATUS_UI[app.status];
   const BadgeIcon = badge.icon;
   const canWithdraw = WITHDRAWABLE.includes(app.status);
   const isAccepted = app.status === "accepted";
+
+  // Entrance: slide + fade up, staggered by list position (capped) so the feed
+  // cascades in. Mount-only — cards persisting across filters don't re-animate.
+  useGSAP(
+    () => {
+      gsap.from(cardRef.current, {
+        y: 18,
+        autoAlpha: 0,
+        duration: 0.5,
+        ease: "power3.out",
+        delay: Math.min(index, 8) * 0.05,
+      });
+    },
+    { scope: cardRef },
+  );
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -226,16 +269,10 @@ function ApplicationCard({ app }: { app: Application }) {
     }
   };
 
-  const onCheckIn = async (e: React.MouseEvent) => {
+  const onCheckIn = (e: React.MouseEvent) => {
     stop(e);
     setActionError(null);
-    try {
-      const coordinates = await getPosition();
-      const res = await checkIn({ id: app.id, method: "gps", coordinates }).unwrap();
-      setCheckedInAt(res.checked_in_at);
-    } catch (err) {
-      setActionError(errMessage(err, "Check-in failed. Try again."));
-    }
+    setCheckInOpen(true);
   };
 
   const onCheckOut = async (e: React.MouseEvent) => {
@@ -252,13 +289,19 @@ function ApplicationCard({ app }: { app: Application }) {
   return (
     <>
     <button
+      ref={cardRef}
       type="button"
       onClick={() => router.push(`/shifts/${shift.id}`)}
-      className="block w-full rounded-3xl border border-border bg-surface p-4 text-left shadow-[0_10px_30px_-24px_rgba(0,0,0,0.5)] active:scale-[0.99]"
+      className="relative block w-full overflow-hidden rounded-3xl border border-brand/30 bg-gradient-to-br from-brand-light via-surface to-brand/25 p-4 pl-5 text-left shadow-[0_10px_30px_-24px_rgba(0,0,0,0.5)] transition-shadow active:scale-[0.99] hover:shadow-[0_16px_36px_-22px_rgba(0,0,0,0.55)]"
     >
+      {/* Status accent rail */}
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${badge.accent}`} />
+
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <BusinessAvatar name={shift.business_profiles.business_name} logo={shift.business_profiles.logo_url} />
+          <span className={`shrink-0 rounded-full p-0.5 ring-2 ${badge.ring}`}>
+            <BusinessAvatar name={shift.business_profiles.business_name} logo={shift.business_profiles.logo_url} />
+          </span>
           <div className="min-w-0">
             <p className="truncate text-[15px] font-bold text-ink">{shift.title}</p>
             <p className="truncate text-[12px] text-text-secondary">
@@ -274,20 +317,13 @@ function ApplicationCard({ app }: { app: Application }) {
         </span>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[12px] font-medium text-text-secondary">
-        <span className="flex items-center gap-1.5">
-          <CalendarDays size={14} className="shrink-0 text-text-tertiary" />
-          {formatShiftDate(shift.shift_date)}
+      <div className="mt-3.5 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-text-secondary">
+        <FactChip icon={CalendarDays} value={formatShiftDate(shift.shift_date)} />
+        <FactChip icon={Clock} value={formatTimeRange(shift.start_time, shift.end_time)} />
+        <FactChip icon={MapPin} value={shift.zones?.name ?? "Location TBA"} />
+        <span className="ml-auto rounded-lg bg-brand/20 px-2.5 py-1 text-[13px] font-extrabold text-ink">
+          {formatTaka(shift.pay_amount)}
         </span>
-        <span className="flex items-center gap-1.5">
-          <Clock size={14} className="shrink-0 text-text-tertiary" />
-          {formatTimeRange(shift.start_time, shift.end_time)}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <MapPin size={14} className="shrink-0 text-text-tertiary" />
-          {shift.zones?.name ?? "Location TBA"}
-        </span>
-        <span className="font-bold text-ink">{formatTaka(shift.pay_amount)} / shift</span>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
@@ -313,7 +349,7 @@ function ApplicationCard({ app }: { app: Application }) {
           ) : (
             <AttendanceAction
               onClick={onCheckIn}
-              loading={checkingIn}
+              loading={false}
               icon={LogIn}
               label="Check in"
               tone="bg-brand text-ink"
@@ -345,7 +381,24 @@ function ApplicationCard({ app }: { app: Application }) {
       loading={withdrawing}
       icon={XCircle}
     />
+
+    <CheckInSheet
+      open={checkInOpen}
+      onClose={() => setCheckInOpen(false)}
+      applicationId={app.id}
+      onCheckedIn={(at) => setCheckedInAt(at)}
+    />
     </>
+  );
+}
+
+/** Small rounded fact chip (date / time / location) inside a card. */
+function FactChip({ icon: Icon, value }: { icon: typeof Clock; value: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-black/[0.04] px-2 py-1">
+      <Icon size={13} className="shrink-0 text-text-tertiary" />
+      <span className="truncate">{value}</span>
+    </span>
   );
 }
 
