@@ -33,6 +33,26 @@ type Props = {
 };
 
 const ROUTE_SOURCE = "wf-route";
+const ROUTE_SHIMMER = "wf-route-flow";
+
+// Dash patterns cycled over time to make a bright dash "flow" along the route —
+// a shimmer that reads as movement toward the destination. (Mapbox ant-trail.)
+const DASH_SEQUENCE: number[][] = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
 
 /** Returns `true` when this is the worker's own accepted (hired) shift. */
 function isAccepted(shift: Shift): boolean {
@@ -57,6 +77,7 @@ export default function ExploreMap({
   const readyRef = useRef(false);
   const markersRef = useRef<Map<string, { marker: maplibregl.Marker; el: HTMLElement }>>(new Map());
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const routeAnimRef = useRef<number | null>(null);
   // Latest onSelect without re-binding map listeners.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -89,6 +110,8 @@ export default function ExploreMap({
     });
 
     return () => {
+      if (routeAnimRef.current) cancelAnimationFrame(routeAnimRef.current);
+      routeAnimRef.current = null;
       markers.forEach(({ marker }) => marker.remove());
       markers.clear();
       map.remove();
@@ -179,6 +202,7 @@ export default function ExploreMap({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [directionsId, shifts]);
 
   function syncMarkers() {
@@ -276,12 +300,45 @@ export default function ExploreMap({
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": "#1f98f9", "line-width": 5 },
     });
+    // Bright dashed overlay whose dashes flow along the route — the shimmer.
+    map.addLayer({
+      id: ROUTE_SHIMMER,
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: { "line-color": "#eaf6ff", "line-width": 3.5, "line-dasharray": [0, 4, 3] },
+    });
+    startShimmer();
+  }
+
+  /** Drives the flowing-dash shimmer by cycling `line-dasharray` over time. */
+  function startShimmer() {
+    let step = 0;
+    const tick = (t: number) => {
+      const map = mapRef.current;
+      if (!map || !map.getLayer(ROUTE_SHIMMER)) {
+        routeAnimRef.current = null;
+        return;
+      }
+      const next = Math.floor((t / 45) % DASH_SEQUENCE.length);
+      if (next !== step) {
+        map.setPaintProperty(ROUTE_SHIMMER, "line-dasharray", DASH_SEQUENCE[step]);
+        step = next;
+      }
+      routeAnimRef.current = requestAnimationFrame(tick);
+    };
+    if (routeAnimRef.current) cancelAnimationFrame(routeAnimRef.current);
+    routeAnimRef.current = requestAnimationFrame(tick);
   }
 
   function clearRoute() {
+    if (routeAnimRef.current) {
+      cancelAnimationFrame(routeAnimRef.current);
+      routeAnimRef.current = null;
+    }
     const map = mapRef.current;
     if (!map) return;
-    for (const id of ["wf-route-line", "wf-route-casing"]) {
+    for (const id of [ROUTE_SHIMMER, "wf-route-line", "wf-route-casing"]) {
       if (map.getLayer(id)) map.removeLayer(id);
     }
     if (map.getSource(ROUTE_SOURCE)) map.removeSource(ROUTE_SOURCE);

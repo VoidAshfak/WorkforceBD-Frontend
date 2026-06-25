@@ -20,7 +20,12 @@ const HIDDEN_ON = ["/profile/edit"];
 export default function BottomNav() {
   const pathname = usePathname();
 
-  if (HIDDEN_ON.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return null;
+  // Hide on focused sub-screens, and on a chat *thread* (`/chat/:id`) — but keep
+  // it on the chat inbox (`/chat`).
+  const hidden =
+    HIDDEN_ON.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    pathname.startsWith("/chat/");
+  if (hidden) return null;
 
   return (
     <nav

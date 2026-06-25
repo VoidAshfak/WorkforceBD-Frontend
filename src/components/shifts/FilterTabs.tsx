@@ -18,7 +18,7 @@ export default function FilterTabs({
   onChange: (filter: ShiftFilter) => void;
 }) {
   return (
-    <div className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {TABS.map((tab) => {
         const isActive = tab.value === active;
         return (
@@ -26,13 +26,13 @@ export default function FilterTabs({
             key={tab.value}
             type="button"
             onClick={() => onChange(tab.value)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-[14px] font-semibold transition-colors ${
+            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-[13.5px] font-bold transition-all duration-200 active:scale-95 ${
               isActive
-                ? "border-ink bg-ink text-white"
-                : "border-border bg-surface text-text-secondary hover:border-ink/30"
+                ? "bg-brand text-ink shadow-[0_6px_16px_-4px_rgba(0,0,0,0.3)]"
+                : "border border-border/60 bg-surface/80 text-text-secondary backdrop-blur-md hover:text-ink"
             }`}
           >
-            <span>{tab.emoji}</span>
+            <span className={`text-[15px] leading-none ${isActive ? "" : "opacity-80"}`}>{tab.emoji}</span>
             {tab.label}
           </button>
         );

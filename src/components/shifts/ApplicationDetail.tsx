@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Clock,
   FileText,
+  Loader2,
   LogIn,
   LogOut,
   MapPin,
@@ -30,6 +31,7 @@ import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import BottomSheet from "@/components/ui/BottomSheet";
 import Button from "@/components/ui/Button";
 import { useCheckOutMutation, useWithdrawApplicationMutation } from "@/store/api/shiftsApi";
+import { useOpenConversationMutation } from "@/store/api/chatApi";
 import { formatInstantTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
 import { googleMapsDirUrl, shiftLatLng } from "@/lib/geo";
 import { gsap, useGSAP } from "@/lib/gsap";
@@ -121,10 +123,12 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKey | null>(null);
 
   const [withdraw, { isLoading: withdrawing }] = useWithdrawApplicationMutation();
   const [checkOut, { isLoading: checkingOut }] = useCheckOutMutation();
+  const [openConversation, { isLoading: openingChat }] = useOpenConversationMutation();
 
   const sui = STATUS_UI[status];
   const StatusIcon = sui.icon;
@@ -168,6 +172,16 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
       setCheckedOutAt(res.checked_out_at);
     } catch (err) {
       setActionError(errMessage(err, "Check-out failed. Try again."));
+    }
+  };
+
+  const openChat = async () => {
+    setChatError(null);
+    try {
+      const convo = await openConversation({ shift_id: shift.id }).unwrap();
+      router.push(`/chat/${convo.id}`);
+    } catch (err) {
+      setChatError(errMessage(err, "Couldn't open chat. Try again."));
     }
   };
 
@@ -260,20 +274,30 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
         />
       </div>
 
-      {/* Chat — stub (no messaging API yet) */}
+      {/* Chat with the business — per-shift thread */}
       <button
         data-rise
         type="button"
-        disabled
-        className="mt-2.5 flex items-center justify-between rounded-2xl border border-border bg-surface px-4 py-3 opacity-70"
+        onClick={openChat}
+        disabled={openingChat}
+        className="mt-2.5 flex items-center justify-between rounded-2xl border border-border bg-surface px-4 py-3 active:scale-[0.99] disabled:opacity-60"
       >
         <span className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-light text-ink">
             <MessageCircle size={15} />
           </span>
-          <span className="text-[14px] font-semibold text-ink">Chat with business</span>
+          <span className="text-left">
+            <span className="block text-[14px] font-semibold text-ink">Chat with business</span>
+            <span className={`block text-[12px] ${chatError ? "text-danger" : "text-text-tertiary"}`}>
+              {chatError ?? `Ask ${biz.business_name} a question`}
+            </span>
+          </span>
         </span>
-        <span className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-bold text-text-secondary">Soon</span>
+        {openingChat ? (
+          <Loader2 size={16} className="animate-spin text-text-tertiary" />
+        ) : (
+          <ChevronRight size={16} className="text-text-tertiary" />
+        )}
       </button>
 
       {/* ---------- drawers ---------- */}

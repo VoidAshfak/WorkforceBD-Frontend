@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   BadgeCheck,
   Bell,
   CheckCheck,
@@ -27,7 +26,6 @@ import type { AppNotification } from "@/types/notification";
  * the shared RTK Query cache + the header bell's polling.
  */
 export default function NotificationsPage() {
-  const router = useRouter();
   const [page, setPage] = useState(1);
   const { data, isLoading, isFetching } = useGetNotificationsQuery({ page, limit: 20 });
   const [markAllRead, { isLoading: markingAll }] = useMarkAllReadMutation();
@@ -39,14 +37,6 @@ export default function NotificationsPage() {
   return (
     <div className="flex min-h-full flex-col px-6 pt-6">
       <header className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
-          aria-label="Back"
-        >
-          <ArrowLeft size={18} />
-        </button>
         <h1 className="flex-1 text-2xl font-bold text-ink">Notifications</h1>
         {unread > 0 ? (
           <button

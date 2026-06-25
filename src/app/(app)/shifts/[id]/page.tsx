@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   BadgeCheck,
   Bus,
   CalendarDays,
@@ -38,15 +37,6 @@ export default function ShiftDetailPage() {
 
   return (
     <div className="flex h-full flex-col px-6 pt-6">
-      <button
-        type="button"
-        onClick={() => router.back()}
-        className="mb-4 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
-        aria-label="Back"
-      >
-        <ArrowLeft size={18} />
-      </button>
-
       <div
         className={`min-h-0 flex-1 ${fitToScreen ? "pb-6" : "overflow-y-auto pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}
       >
