@@ -22,7 +22,7 @@ import { useApplyToShiftMutation, useGetShiftQuery } from "@/store/api/shiftsApi
 import { formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { createLogger } from "@/lib/logger";
-import type { Shift } from "@/types/shift";
+import type { ApplicationStatus, Shift } from "@/types/shift";
 
 const log = createLogger("shift:detail");
 
@@ -197,6 +197,12 @@ function ApplySection({
     );
   }
 
+  // Already applied (any state, incl. withdrawn) — re-apply is rejected server-side,
+  // so no apply button. Show the current state and point to Activity.
+  if (shift.has_applied) {
+    return <AlreadyApplied status={shift.my_application?.status} onTrack={() => router.push("/activity")} />;
+  }
+
   if (shift.is_full) {
     return (
       <Button fullWidth disabled>
@@ -245,6 +251,40 @@ function ApplySection({
       {error ? <p className="text-[13px] text-danger">{error}</p> : null}
       <Button fullWidth loading={isLoading} onClick={onApply}>
         Apply now
+      </Button>
+    </div>
+  );
+}
+
+/** Headline shown in place of the apply button once the worker has applied. */
+const APPLIED_HEADLINE: Record<ApplicationStatus, string> = {
+  pending: "Application sent",
+  shortlisted: "You're shortlisted",
+  accepted: "You're hired",
+  rejected: "Not selected",
+  withdrawn: "You withdrew",
+  no_show: "Marked no-show",
+};
+
+function AlreadyApplied({
+  status,
+  onTrack,
+}: {
+  status?: ApplicationStatus;
+  onTrack: () => void;
+}) {
+  const headline = status ? APPLIED_HEADLINE[status] : "Already applied";
+  const withdrew = status === "withdrawn";
+  return (
+    <div className="rounded-2xl bg-brand/40 p-4 text-center">
+      <p className="text-[15px] font-bold text-ink">{headline}</p>
+      <p className="mt-1 text-[13px] text-text-muted">
+        {withdrew
+          ? "You can't apply to this shift again."
+          : "Track this application in your Activity tab."}
+      </p>
+      <Button variant="secondary" fullWidth onClick={onTrack} className="mt-3">
+        View in Activity
       </Button>
     </div>
   );

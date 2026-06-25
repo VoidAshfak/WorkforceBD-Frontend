@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
 import { useAppSelector } from "@/store/hooks";
 import {
@@ -29,7 +30,7 @@ import {
   useGetApplicationsQuery,
   useWithdrawApplicationMutation,
 } from "@/store/api/shiftsApi";
-import { formatRelativeTime, formatShiftDate, formatTaka, formatTime, formatTimeRange } from "@/lib/format";
+import { formatInstantTime, formatRelativeTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
 import type { Application, ApplicationStatus, Coordinates } from "@/types/shift";
 
 /** Reads the device's current position for GPS check-in. */
@@ -40,7 +41,13 @@ function getPosition(): Promise<Coordinates> {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      (pos) =>
+        resolve({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          // Backend rejects accuracy worse than 100m; send it so it can guard.
+          accuracy: pos.coords.accuracy,
+        }),
       (err) =>
         reject(
           new Error(
@@ -194,6 +201,7 @@ function ApplicationCard({ app }: { app: Application }) {
   const [checkedInAt, setCheckedInAt] = useState<string | null>(app.checked_in_at ?? null);
   const [checkedOutAt, setCheckedOutAt] = useState<string | null>(app.checked_out_at ?? null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
 
   const shift = app.shifts;
   const badge = STATUS_UI[app.status];
@@ -203,13 +211,18 @@ function ApplicationCard({ app }: { app: Application }) {
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-  const onWithdraw = async (e: React.MouseEvent) => {
+  const onWithdraw = (e: React.MouseEvent) => {
     stop(e);
-    if (!window.confirm("Withdraw this application? You can re-apply later.")) return;
+    setConfirmWithdraw(true);
+  };
+
+  const doWithdraw = async () => {
     try {
       await withdraw(app.id).unwrap();
     } catch {
       // List stays as-is; the row keeps its current status on failure.
+    } finally {
+      setConfirmWithdraw(false);
     }
   };
 
@@ -237,6 +250,7 @@ function ApplicationCard({ app }: { app: Application }) {
   };
 
   return (
+    <>
     <button
       type="button"
       onClick={() => router.push(`/shifts/${shift.id}`)}
@@ -278,7 +292,7 @@ function ApplicationCard({ app }: { app: Application }) {
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
         <span className="min-w-0 truncate text-[11px] text-text-tertiary">
-          {checkedInAt ? `Checked in ${formatTime(checkedInAt)}` : `Applied ${formatRelativeTime(app.applied_at)}`}
+          {checkedInAt ? `Checked in ${formatInstantTime(checkedInAt)}` : `Applied ${formatRelativeTime(app.applied_at)}`}
         </span>
 
         {/* Accepted shifts get the live-attendance actions; pending/shortlisted
@@ -318,6 +332,20 @@ function ApplicationCard({ app }: { app: Application }) {
 
       {actionError ? <p className="mt-2 text-[12px] font-medium text-danger">{actionError}</p> : null}
     </button>
+
+    <ConfirmSheet
+      open={confirmWithdraw}
+      onClose={() => setConfirmWithdraw(false)}
+      onConfirm={doWithdraw}
+      title="Withdraw this application?"
+      description="This is permanent — you can't apply to this shift again."
+      confirmLabel="Withdraw"
+      cancelLabel="Keep it"
+      tone="danger"
+      loading={withdrawing}
+      icon={XCircle}
+    />
+    </>
   );
 }
 

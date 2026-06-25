@@ -2,18 +2,41 @@ import {
   BadgeCheck,
   Bus,
   CalendarDays,
+  Check,
   ChevronRight,
   Clock,
   Flame,
   MapPin,
   UtensilsCrossed,
+  X,
   Zap,
 } from "lucide-react";
 
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
 import { cardTheme, shiftEmoji } from "@/config/shiftTheme";
 import { formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
-import type { Shift } from "@/types/shift";
+import type { ApplicationStatus, Shift } from "@/types/shift";
+
+/** The worker's own application state, shown as a hero pill on the deck card. */
+function appliedPill(
+  status?: ApplicationStatus,
+): { label: string; text: string; icon: typeof Check } | null {
+  switch (status) {
+    case "pending":
+    case "shortlisted":
+      return { label: "Applied", text: "text-sky", icon: Check };
+    case "accepted":
+      return { label: "Hired", text: "text-emerald", icon: BadgeCheck };
+    case "withdrawn":
+      return { label: "Withdrawn", text: "text-text-secondary", icon: X };
+    case "rejected":
+      return { label: "Not selected", text: "text-danger", icon: X };
+    case "no_show":
+      return { label: "No show", text: "text-danger", icon: X };
+    default:
+      return { label: "Applied", text: "text-sky", icon: Check };
+  }
+}
 
 /**
  * A single full-bleed deck card — the star of the Home tab. A bold gradient hero
@@ -31,6 +54,7 @@ export default function SwipeCard({ shift }: { shift: Shift }) {
   const almostGone = !shift.is_full && remaining > 0 && remaining <= 3;
   const fillPct = shift.capacity > 0 ? Math.round((shift.filled / shift.capacity) * 100) : 0;
   const category = shift.categories?.name ?? shift.role_type;
+  const status = shift.has_applied ? appliedPill(shift.my_application?.status) : null;
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_28px_60px_-22px_rgba(0,0,0,0.45)]">
@@ -57,6 +81,13 @@ export default function SwipeCard({ shift }: { shift: Shift }) {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {status ? (
+              <span
+                className={`flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-extrabold shadow-sm ${status.text}`}
+              >
+                <status.icon size={12} /> {status.label}
+              </span>
+            ) : null}
             {almostGone ? (
               <span className="flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-extrabold text-[#E0522B] shadow-sm">
                 <Flame size={12} className="fill-current" /> {remaining} left
@@ -103,49 +134,53 @@ export default function SwipeCard({ shift }: { shift: Shift }) {
         </div>
       </div>
 
-      {/* Info sheet */}
-      <div className="flex flex-1 flex-col gap-4 p-6 pt-5">
-        <div className="grid grid-cols-2 gap-2.5">
-          <Fact icon={CalendarDays} value={formatShiftDate(shift.shift_date)} />
-          <Fact icon={Clock} value={formatTimeRange(shift.start_time, shift.end_time)} />
-          <Fact
-            icon={MapPin}
-            value={shift.zones?.name ?? shift.landmark ?? shift.address ?? "Location TBA"}
-          />
-          <Fact icon={UtensilsCrossed} value={`${shift.filled}/${shift.capacity} filled`} />
-        </div>
-
-        {/* Fill progress — visual sense of how fast the shift is filling. */}
-        <div>
-          <div className="mb-1.5 flex items-center justify-between text-[12px] font-semibold">
-            <span className="text-text-secondary">{shift.filled} of {shift.capacity} hired</span>
-            <span className={shift.is_full ? "text-text-tertiary" : "text-emerald"}>
-              {shift.is_full ? "Filled" : `${remaining} open`}
-            </span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-black/[0.06]">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald to-[#1A964A]"
-              style={{ width: `${Math.max(fillPct, 4)}%` }}
+      {/* Info sheet — scrollable content + a pinned footer so every card shows
+          the same sections in the same place and the footer is never clipped,
+          regardless of how much optional content (description/perks) a shift has. */}
+      <div className="flex min-h-0 flex-1 flex-col p-6 pt-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="grid grid-cols-2 gap-2.5">
+            <Fact icon={CalendarDays} value={formatShiftDate(shift.shift_date)} />
+            <Fact icon={Clock} value={formatTimeRange(shift.start_time, shift.end_time)} />
+            <Fact
+              icon={MapPin}
+              value={shift.zones?.name ?? shift.landmark ?? shift.address ?? "Location TBA"}
             />
+            <Fact icon={UtensilsCrossed} value={`${shift.filled}/${shift.capacity} filled`} />
           </div>
+
+          {/* Fill progress — visual sense of how fast the shift is filling. */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-[12px] font-semibold">
+              <span className="text-text-secondary">{shift.filled} of {shift.capacity} hired</span>
+              <span className={shift.is_full ? "text-text-tertiary" : "text-emerald"}>
+                {shift.is_full ? "Filled" : `${remaining} open`}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-black/[0.06]">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald to-[#1A964A]"
+                style={{ width: `${Math.max(fillPct, 4)}%` }}
+              />
+            </div>
+          </div>
+
+          {shift.description ? (
+            <p className="line-clamp-3 text-[13px] leading-5 text-text-secondary">
+              {shift.description}
+            </p>
+          ) : null}
+
+          {shift.meal_included || shift.transport_support ? (
+            <div className="flex flex-wrap gap-2">
+              {shift.meal_included ? <Perk icon={UtensilsCrossed} label="Meal" /> : null}
+              {shift.transport_support ? <Perk icon={Bus} label="Transport" /> : null}
+            </div>
+          ) : null}
         </div>
 
-        {shift.description ? (
-          <p className="line-clamp-3 text-[13px] leading-5 text-text-secondary">
-            {shift.description}
-          </p>
-        ) : null}
-
-        {shift.meal_included || shift.transport_support ? (
-          <div className="flex flex-wrap gap-2">
-            {shift.meal_included ? <Perk icon={UtensilsCrossed} label="Meal" /> : null}
-            {shift.transport_support ? <Perk icon={Bus} label="Transport" /> : null}
-          </div>
-        ) : null}
-
-        {/* Details footer */}
-        <div className="mt-auto flex items-center justify-between border-t border-border/70 pt-3.5 text-[13px] font-bold text-ink">
+        {/* Details footer — pinned, always visible. */}
+        <div className="mt-4 flex shrink-0 items-center justify-between border-t border-border/70 pt-3.5 text-[13px] font-bold text-ink">
           <span>View full details</span>
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-ink">
             <ChevronRight size={16} />

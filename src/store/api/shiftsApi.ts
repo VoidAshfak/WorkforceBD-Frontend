@@ -98,7 +98,7 @@ export const shiftsApi = createApi({
     // from each mutation's result.
     checkIn: build.mutation<
       { id: string; checked_in_at: string; checkin_method: CheckInMethod },
-      { id: string; method: CheckInMethod; coordinates?: Coordinates; qr_token?: string }
+      { id: string; method: CheckInMethod; coordinates: Coordinates; qr_token?: string }
     >({
       query: ({ id, ...body }) => ({
         url: `/applications/${id}/check-in`,
