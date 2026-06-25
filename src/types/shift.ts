@@ -6,7 +6,7 @@ export type ShiftType = "instant" | "scheduled" | "prebooked";
 export type ShiftFilter = "all" | "nearby" | "urgent" | "high_pay";
 
 /** WGS84 point decoded from the backend's PostGIS geography. */
-export type Coordinates = { latitude: number; longitude: number };
+export type Coordinates = { latitude: number; longitude: number; accuracy?: number };
 
 export type ShiftBusiness = {
   id: string;
@@ -49,6 +49,10 @@ export type Shift = {
   filled: number;
   capacity: number;
   is_full: boolean;
+  /** The requesting worker's own application on this shift. */
+  has_applied: boolean;
+  /** `{ id, status }` when the worker has applied (any lifecycle state), else null. */
+  my_application: { id: string; status: ApplicationStatus } | null;
 };
 
 export type Pagination = {
@@ -92,8 +96,8 @@ export type ApplicationShift = {
   zones: { name: string } | null;
 };
 
-/** Presence-proof method for shift check-in. */
-export type CheckInMethod = "gps" | "qr" | "manual";
+/** Presence-proof method for shift check-in. `manual` is business/admin-only. */
+export type CheckInMethod = "gps" | "qr";
 
 /** A worker's application as it appears in the tracker (`GET /applications`). */
 export type Application = {

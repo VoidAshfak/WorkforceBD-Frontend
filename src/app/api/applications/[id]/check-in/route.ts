@@ -9,14 +9,15 @@ const log = createLogger("applications:check-in");
 
 const checkInSchema = z
   .object({
-    method: z.enum(["gps", "qr", "manual"]),
-    coordinates: z
-      .object({ latitude: z.number(), longitude: z.number() })
-      .optional(),
+    // `manual` is a business/admin override — rejected from the worker endpoint.
+    method: z.enum(["gps", "qr"]),
+    // Coordinates prove the geofence and are required for every method.
+    coordinates: z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+      accuracy: z.number().optional(),
+    }),
     qr_token: z.string().min(1).optional(),
-  })
-  .refine((v) => v.method !== "gps" || v.coordinates, {
-    message: "coordinates are required for GPS check-in",
   })
   .refine((v) => v.method !== "qr" || v.qr_token, {
     message: "qr_token is required for QR check-in",
