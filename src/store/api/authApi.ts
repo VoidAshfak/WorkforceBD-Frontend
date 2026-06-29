@@ -33,6 +33,14 @@ export const authApi = createApi({
       providesTags: ["Session"],
     }),
 
+    // Flips the active account context for a dual-role user (worker ⇄ business).
+    // The BFF swaps the access cookie to the new-context token returned here.
+    switchRole: build.mutation<SessionPayload, { role: Role }>({
+      query: (body) => ({ url: "/switch-role", method: "POST", body }),
+      transformResponse: (res: ApiEnvelope<SessionPayload>) => res.data,
+      invalidatesTags: ["Session"],
+    }),
+
     logout: build.mutation<{ message: string }, void>({
       query: () => ({ url: "/logout", method: "POST" }),
       invalidatesTags: ["Session"],
@@ -44,5 +52,6 @@ export const {
   useSendOtpMutation,
   useVerifyOtpMutation,
   useGetMeQuery,
+  useSwitchRoleMutation,
   useLogoutMutation,
 } = authApi;

@@ -8,6 +8,7 @@ import {
   CheckCheck,
   CheckCircle2,
   Megaphone,
+  UserPlus,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -141,6 +142,9 @@ function visualFor(n: AppNotification): { icon: LucideIcon; tone: string } {
   if (kind === "shift_moderation") {
     return { icon: Megaphone, tone: "bg-warning/20 text-text-muted" };
   }
+  if (kind === "new_applicant") {
+    return { icon: UserPlus, tone: "bg-sky/10 text-sky" };
+  }
   return { icon: Bell, tone: "bg-black/5 text-ink" };
 }
 
@@ -154,6 +158,9 @@ function linkFor(n: AppNotification): string | null {
       return shiftId ? `/shifts/${shiftId}` : "/activity";
     case "shift_moderation":
       return shiftId ? `/shifts/${shiftId}` : null;
+    case "new_applicant":
+      // Business side → the created-shift page, focused on its applicants.
+      return shiftId ? `/shifts/${shiftId}?tab=applicants` : null;
     default:
       return null;
   }

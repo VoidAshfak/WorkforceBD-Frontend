@@ -3,6 +3,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { authApi } from "@/store/api/authApi";
 import { workerApi } from "@/store/api/workerApi";
 import { shiftsApi } from "@/store/api/shiftsApi";
+import { businessApi } from "@/store/api/businessApi";
 import { notificationsApi } from "@/store/api/notificationsApi";
 import { chatApi } from "@/store/api/chatApi";
 import authReducer from "@/store/slices/authSlice";
@@ -14,6 +15,7 @@ export const makeStore = () =>
       [authApi.reducerPath]: authApi.reducer,
       [workerApi.reducerPath]: workerApi.reducer,
       [shiftsApi.reducerPath]: shiftsApi.reducer,
+      [businessApi.reducerPath]: businessApi.reducer,
       [notificationsApi.reducerPath]: notificationsApi.reducer,
       [chatApi.reducerPath]: chatApi.reducer,
     },
@@ -22,6 +24,7 @@ export const makeStore = () =>
         authApi.middleware,
         workerApi.middleware,
         shiftsApi.middleware,
+        businessApi.middleware,
         notificationsApi.middleware,
         chatApi.middleware,
       ),

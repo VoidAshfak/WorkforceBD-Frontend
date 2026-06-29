@@ -12,13 +12,17 @@ export type NotificationPriority = "low" | "normal" | "high" | "urgent";
 export type NotificationKind =
   | "verification_decision"
   | "application_decision"
-  | "shift_moderation";
+  | "shift_moderation"
+  /** Business side: a worker applied to one of the business's shifts. */
+  | "new_applicant";
 
 export type NotificationData = {
   kind?: NotificationKind | string;
   /** application_decision: "accepted" | "rejected"; verification: "verified" | "rejected". */
   status?: string;
   shift_id?: string;
+  /** new_applicant: the application that was created. */
+  application_id?: string;
   [key: string]: unknown;
 };
 

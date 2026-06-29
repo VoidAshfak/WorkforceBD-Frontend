@@ -15,7 +15,7 @@ function isActive(href: string, pathname: string): boolean {
  * 56px+ touch targets, active tab anchored by a brand-yellow indicator.
  */
 /** Focused sub-screens that hide the nav for an immersive, full-height flow. */
-const HIDDEN_ON = ["/profile/edit"];
+const HIDDEN_ON = ["/profile/edit", "/shifts/new"];
 
 export default function BottomNav() {
   const pathname = usePathname();

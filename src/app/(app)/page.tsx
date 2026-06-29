@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Briefcase, Clock, Compass, RefreshCw, Sparkles } from "lucide-react";
+import { Clock, Compass, RefreshCw, Sparkles } from "lucide-react";
 
 import FilterTabs from "@/components/shifts/FilterTabs";
 import SwipeDeck from "@/components/shifts/SwipeDeck";
-import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import BusinessHome from "@/components/business/BusinessHome";
 import { useAppSelector } from "@/store/hooks";
 import { useGetShiftsQuery } from "@/store/api/shiftsApi";
 import type { ShiftFilter } from "@/types/shift";
@@ -22,10 +22,10 @@ export default function HomePage() {
 
   if (activeRole === "business") {
     return (
-      <ScreenPlaceholder
-        icon={Briefcase}
-        title="Business home"
-        subtitle="Your operations control center is coming soon — post shifts and manage hires here."
+      <BusinessHome
+        name={user?.full_name?.split(" ")[0]}
+        hasProfile={profile?.exists ?? false}
+        status={profile?.verification_status}
       />
     );
   }

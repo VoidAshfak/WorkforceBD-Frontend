@@ -43,3 +43,6 @@ next-env.d.ts
 
 docs/*
 !docs/api-guidelines.md
+.vscode
+.agents
+.claude
