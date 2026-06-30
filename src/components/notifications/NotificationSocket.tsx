@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { io, type Socket } from "socket.io-client";
 
-import { useAppDispatch } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { notificationsApi } from "@/store/api/notificationsApi";
 import { chatApi } from "@/store/api/chatApi";
 import { fetchSocketTicket, SOCKET_URL } from "@/lib/realtime";
@@ -25,9 +25,16 @@ type ChatReadEvent = { conversation_id: string; read_at: string };
  * The ticket is fetched lazily via the `auth` callback, which Socket.IO invokes
  * before every (re)connect, so reconnects always handshake with a fresh ticket.
  * Renders nothing; mount once inside the authenticated app shell.
+ *
+ * The socket ticket captures the caller's active role at mint time, and chat is
+ * scoped to that role server-side. So the connection is keyed on `activeRole`:
+ * switching context tears down the old socket and reconnects with a fresh,
+ * correctly-scoped ticket — otherwise chat events would stay bound to the old
+ * side. (Chat RTK caches are reset at switch time by the profile screen.)
  */
 export default function NotificationSocket() {
   const dispatch = useAppDispatch();
+  const activeRole = useAppSelector((s) => s.auth.activeRole);
 
   useEffect(() => {
     let active = true;
@@ -98,7 +105,7 @@ export default function NotificationSocket() {
       active = false;
       socket.disconnect();
     };
-  }, [dispatch]);
+  }, [dispatch, activeRole]);
 
   return null;
 }

@@ -55,6 +55,7 @@ const authSlice = createSlice({
     builder
       .addMatcher(authApi.endpoints.verifyOtp.matchFulfilled, authed)
       .addMatcher(authApi.endpoints.getMe.matchFulfilled, authed)
+      .addMatcher(authApi.endpoints.switchRole.matchFulfilled, authed)
       .addMatcher(authApi.endpoints.getMe.matchRejected, (state) => {
         if (state.status === "idle") state.status = "unauthenticated";
       })

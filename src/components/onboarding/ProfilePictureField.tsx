@@ -4,14 +4,21 @@ import { useRef, useState } from "react";
 import { Camera, Loader2 } from "lucide-react";
 
 import { useFileUpload } from "@/hooks/useFileUpload";
+import type { PresignPurpose } from "@/types/worker";
 
-/** Circular avatar picker: pick → preview → upload to Cloudinary → hosted URL. */
+/**
+ * Circular avatar picker: pick → preview → upload to Cloudinary → hosted URL.
+ * `purpose` selects the Cloudinary folder — defaults to `profile_picture` (worker
+ * avatar); pass `business_logo` for a business logo.
+ */
 export default function ProfilePictureField({
   value,
   onChange,
+  purpose = "profile_picture",
 }: {
   value: string | null;
   onChange: (url: string | null) => void;
+  purpose?: PresignPurpose;
 }) {
   const upload = useFileUpload();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,7 +35,7 @@ export default function ProfilePictureField({
     setBusy(true);
     setPreview(URL.createObjectURL(file));
     try {
-      onChange(await upload(file, "profile_picture"));
+      onChange(await upload(file, purpose));
     } catch (err) {
       setPreview(null);
       onChange(null);

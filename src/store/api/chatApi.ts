@@ -104,8 +104,13 @@ export const chatApi = createApi({
       invalidatesTags: ["ChatInbox", "ChatUnread"],
     }),
 
-    getChatUnreadCount: build.query<number, void>({
-      query: () => ({ url: "/chat/unread-count", method: "GET" }),
+    // Pass a `shift_id` for a per-shift unread badge; omit for the global total.
+    getChatUnreadCount: build.query<number, { shift_id?: string } | void>({
+      query: (args) => ({
+        url: "/chat/unread-count",
+        method: "GET",
+        params: cleanParams(args ?? {}),
+      }),
       transformResponse: (res: ApiEnvelope<{ unread_count: number }>) => res.data.unread_count,
       providesTags: ["ChatUnread"],
     }),

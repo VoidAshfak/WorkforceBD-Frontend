@@ -38,6 +38,31 @@ export const SLOT_OPTIONS: {
   { value: "night", label: "Night", hint: "8pm – 2am", emoji: "🌙" },
 ];
 
+/* ----------------------------- Business --------------------------------- */
+
+/** Common BD business types (free-text values; the API stores the string). */
+export const BUSINESS_TYPE_OPTIONS: { value: string; label: string; emoji: string }[] = [
+  { value: "Restaurant & Cafe", label: "Restaurant & Cafe", emoji: "🍽️" },
+  { value: "Events & Wedding", label: "Events & Wedding", emoji: "🎉" },
+  { value: "Hotel & Hospitality", label: "Hotel", emoji: "🏨" },
+  { value: "Retail & Shop", label: "Retail", emoji: "🛍️" },
+  { value: "Corporate & Office", label: "Corporate", emoji: "🏢" },
+  { value: "Other", label: "Other", emoji: "✨" },
+];
+
+/** Perk/attire toggles a business advertises to workers (step 3). */
+export const BUSINESS_PERK_OPTIONS: {
+  key: "meal_included" | "transport_support" | "female_friendly" | "uniform_required";
+  label: string;
+  hint: string;
+  emoji: string;
+}[] = [
+  { key: "meal_included", label: "Meal included", hint: "You provide food on shift", emoji: "🍽️" },
+  { key: "transport_support", label: "Transport support", hint: "You help with travel", emoji: "🚌" },
+  { key: "female_friendly", label: "Female friendly", hint: "Safe, welcoming for women", emoji: "💜" },
+  { key: "uniform_required", label: "Uniform required", hint: "Workers wear a dress code", emoji: "👔" },
+];
+
 /** Picks a playful emoji for a skill by keyword, with a safe default. */
 export function skillEmoji(name: string): string {
   const n = name.toLowerCase();

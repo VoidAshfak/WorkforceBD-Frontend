@@ -24,9 +24,15 @@ export const verifySchema = z.object({
   role: roleSchema,
 });
 
+/** Switch the active account context for a user who holds both roles. */
+export const switchRoleSchema = z.object({
+  role: roleSchema,
+});
+
 export type Role = z.infer<typeof roleSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type VerifyInput = z.infer<typeof verifySchema>;
+export type SwitchRoleInput = z.infer<typeof switchRoleSchema>;
 
 /**
  * Normalize loose user input toward `+8801...`.

@@ -1,13 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowRight, BadgeCheck, Clock, LogOut, Pencil, ShieldX, Sparkles } from "lucide-react";
+import { ArrowRight, ArrowLeftRight, BadgeCheck, Clock, LogOut, Pencil, ShieldX, Sparkles } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/slices/authSlice";
-import { useLogoutMutation } from "@/store/api/authApi";
-import { useGetWorkerProfileQuery } from "@/store/api/workerApi";
+import { useLogoutMutation, useSwitchRoleMutation } from "@/store/api/authApi";
+import { workerApi, useGetWorkerProfileQuery } from "@/store/api/workerApi";
+import { shiftsApi } from "@/store/api/shiftsApi";
+import { businessApi } from "@/store/api/businessApi";
+import { chatApi } from "@/store/api/chatApi";
 import type { VerificationStatus } from "@/types/auth";
 
 const STATUS_UI: Record<
@@ -25,6 +28,30 @@ export default function ProfilePage() {
   const dispatch = useAppDispatch();
   const { user, activeRole, profile } = useAppSelector((s) => s.auth);
   const [logout, { isLoading }] = useLogoutMutation();
+  const [switchRole, { isLoading: switching }] = useSwitchRoleMutation();
+
+  // Dual-role users (worker + business) can flip context. The "other" role is
+  // the one they hold but aren't currently acting as.
+  const otherRole = user?.roles.find((r) => r !== activeRole) ?? null;
+
+  const onSwitchRole = async () => {
+    if (!otherRole) return;
+    try {
+      await switchRole({ role: otherRole }).unwrap();
+      // The new context re-scopes every role-bound cache: worker/shift data,
+      // business data, and chat (inbox/unread/threads are filtered by active
+      // role server-side). Reset them so nothing from the old role leaks through.
+      // The socket reconnects with a fresh, role-scoped ticket on its own
+      // (NotificationSocket keys on activeRole).
+      dispatch(workerApi.util.resetApiState());
+      dispatch(shiftsApi.util.resetApiState());
+      dispatch(businessApi.util.resetApiState());
+      dispatch(chatApi.util.resetApiState());
+      router.replace("/");
+    } catch {
+      // Switch failed (e.g. role lost) — leave the user on the current context.
+    }
+  };
 
   // The auth user's `full_name` is always null — the name lives on the worker
   // profile, so fetch it for workers and prefer it over the account field.
@@ -94,6 +121,30 @@ export default function ProfilePage() {
           {badge.label}
         </span>
       </div>
+
+      {otherRole ? (
+        <button
+          type="button"
+          onClick={onSwitchRole}
+          disabled={switching}
+          className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-surface p-4 text-left active:scale-[0.99] disabled:opacity-60"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink">
+            {switching ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <ArrowLeftRight size={18} />
+            )}
+          </span>
+          <span className="flex-1">
+            <span className="block text-[15px] font-bold text-ink">Switch account</span>
+            <span className="block text-[13px] text-text-muted capitalize">
+              Switch to {otherRole} account
+            </span>
+          </span>
+          <ArrowRight size={18} className="text-text-tertiary" />
+        </button>
+      ) : null}
 
       {showCompleteCta ? (
         <button

@@ -138,6 +138,8 @@ Authorization: Bearer <access_token>
 }
 ```
 
+When `roles` holds **both** `worker` and `business`, show the "Switch account" button (both `profiles.*` are non-null) and call [`/auth/switch-role`](#post-authswitch-role) to flip context.
+
 A role's `profiles.<role>` is `null` when the user does not hold that role. For roles the user holds:
 
 | Field | Meaning |
@@ -245,7 +247,7 @@ Verify OTP. One unified path — the server creates the account on first use or 
 }
 ```
 
-`active_role` is the role passed in (`null` if omitted by a returning user). `profile` is that role's summary (same shape as in `/auth/me`) — use `verification_status` to decide full vs restrictive access and `next_step` to route into onboarding. For business, `profile.exists` is `false` until the business profile is created.
+`active_role` is the account context the new token carries: the role passed in, or — for a returning user who omitted it — their first role (`null` only if the user somehow holds no worker/business role). It's enforced on role-specific endpoints (see [Account context](#account-context-active-role)). `profile` is that role's summary (same shape as in `/auth/me`) — use `verification_status` to decide full vs restrictive access and `next_step` to route into onboarding. For business, `profile.exists` is `false` until the business profile is created.
 
 **Error `400`** — OTP invalid or expired
 ```json
@@ -273,6 +275,45 @@ Verify OTP. One unified path — the server creates the account on first use or 
 
 > **Rate limit:** 5 verify attempts per IP per 15 minutes.
 > Store `accessToken` and `refreshToken` securely. Access token expires in **15 minutes**. Refresh token expires in **30 days**.
+
+---
+
+### POST `/auth/switch-role`
+
+Switches the active account context for a user who holds **both** roles (worker ⇄ business) — backs the "Switch account" button on the profile screen. Requires `Authorization: Bearer <access_token>`.
+
+A user gains the second role through the normal login flow: sign in with the same number via [`/auth/verify-otp`](#post-authverify-otp) and pass the other `role` — it's added to the account. Once `roles` holds both, the app shows the switch button (derive from `/auth/me` → `roles`).
+
+Returns a **new access token** carrying the new context (`active_role`). The app must replace its stored access token with this one — the old token keeps its old context until it expires, and role-specific endpoints are now **enforced by active context** (see [Account context](#account-context-active-role)). The refresh token is unchanged. The response also carries the target role's profile summary so the app can route to the full or onboarding view.
+
+**Body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `role` | enum | ✅ | `worker` \| `business` — must be a role the user already holds |
+
+**Response `200`** — `"Switched to <role> account"`
+```json
+{
+  "success": true,
+  "message": "Switched to business account",
+  "data": {
+    "accessToken": "<new JWT — replace your stored token>",
+    "active_role": "business",
+    "user": { "id": "uuid", "phone": "+8801…", "email": null, "full_name": "…", "roles": ["worker", "business"], "is_phone_verified": true },
+    "profile": { "exists": true, "verification_status": "verified", "next_step": null }
+  }
+}
+```
+`profile` is the target role's summary (same shape as `/auth/me` → `profiles.<role>`). For `business` with the role but no profile yet, `exists` is `false` and `next_step` is `create_business` — route to onboarding.
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `403` | `You don't have a <role> account. …` | `role` not in the user's `roles` |
+| `401` | `Authorization token required` | Missing/invalid token |
+| `422` | `Validation failed` | `role` missing or not `worker`/`business` |
 
 ---
 
@@ -433,11 +474,50 @@ Currently gated:
 
 ---
 
+## Account context (active role)
+
+A user may hold both `worker` and `business` roles. The access token carries an **`active_role`** claim — the account context it's currently acting as — set at login (the role signed in with, else the user's first role) and changed via [`/auth/switch-role`](#post-authswitch-role). It's persisted on the session, so it survives `/auth/refresh`.
+
+Role-specific endpoint groups are **enforced by active context**, not just membership:
+
+| Context (`active_role`) | Allowed endpoint groups |
+|---|---|
+| `worker` | `/worker/*`, `/shifts/*`, `/applications/*`, worker `/payments/*` (wallet, payouts) |
+| `business` | `/business/*`, business `/payments/*` (complete, settle) |
+
+A dual-role user in the **wrong context** gets `403 Switch to your <role> account to use this feature` — call `/auth/switch-role` (which returns a fresh token), then retry. Admin endpoints (`/admin/*`) are membership-based and unaffected. Context-neutral endpoints (notifications, chat, realtime, upload) are not gated by context.
+
+> Tokens minted before this rollout have no `active_role` claim; they fall back to membership checks until refreshed (≤15 min). No re-login required.
+
+---
+
+## Categories
+
+Shared reference data — used by businesses when creating shifts (`category_id` is required) and by workers as a discovery filter.
+
+### GET `/categories`
+
+Returns all active categories for selection dropdowns. Requires auth; readable by any active role (worker, business, admin).
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Categories fetched",
+  "data": [
+    { "id": "uuid", "name": "Event Staff", "icon_url": null },
+    { "id": "uuid", "name": "Restaurant Staff", "icon_url": null }
+  ]
+}
+```
+
+---
+
 ## Worker Profile
 
 All endpoints require:
 - `Authorization: Bearer <access_token>`
-- User must have `worker` role
+- Active context must be `worker` (see [Account context](#account-context-active-role))
 
 ---
 
@@ -710,7 +790,7 @@ Worker can now browse and apply for shifts
 
 Worker-facing shift discovery feed and detail. All endpoints require:
 - `Authorization: Bearer <access_token>`
-- User must have `worker` role
+- Active context must be `worker` (see [Account context](#account-context-active-role))
 
 Only shifts with status `published` or `applications_open` (and `shift_date` today or later) appear in discovery. Each shift carries computed slot counters:
 
@@ -893,7 +973,7 @@ Single shift detail. Includes richer business info (reliability + verification).
 
 Worker applies to shifts and tracks application state. All endpoints require:
 - `Authorization: Bearer <access_token>`
-- User must have `worker` role
+- Active context must be `worker` (see [Account context](#account-context-active-role))
 
 `POST /applications` additionally requires an **admin-verified** worker profile (see [Verification Gate](#verification-gate)). Listing and withdrawing do not.
 
@@ -912,7 +992,7 @@ Worker applies to shifts and tracks application state. All endpoints require:
 
 ### POST `/applications`
 
-Apply to a shift. Requires a verified worker profile.
+Apply to a shift. Requires a verified worker profile. On success the owning business is notified instantly (`notification:new`, `data.kind = "new_applicant"` with `shift_id` + `application_id`).
 
 **Request Body**
 ```json
@@ -1118,11 +1198,19 @@ Worker checks out of a shift they previously checked into. Requires an admin-ver
 
 Business-side endpoints: profile onboarding, shift management, applicant screening, and the home dashboard. All endpoints require:
 - `Authorization: Bearer <access_token>`
-- User must have the `business` role (chosen on the role-select screen, added on first `business` OTP login)
+- Active context must be `business` (see [Account context](#account-context-active-role)) — the `business` role is chosen on the role-select screen, added on first `business` OTP login
 
-Base path: `/api/v1/business`. Onboarding endpoints do **not** require a verified profile — a business builds its profile here. Verification is optional (increases worker trust) and reviewed by an admin (see [Admin](#admin)).
+Base path: `/api/v1/business`. Onboarding and read endpoints do **not** require a verified profile — a business builds its profile and browses here. **Impactful actions require an admin-verified profile** (see the verification gate below).
 
-> **Shift moderation:** Submitting a shift does **not** make it instantly visible. It enters `pending_approval` and an admin must approve it (`pending_approval` → `published`) before workers can see/apply. Rejection returns it to `draft` for the business to edit and resubmit (see [Admin](#admin)). A business may submit shifts while still `unverified`.
+> **Verification gate:** Onboarding (`POST/PATCH /business/profile*`) and all reads (`GET` profile, wallet, dashboard, shifts, applicants, roster) are open to an `unverified` business so it can complete its profile and submit documents. The following **require `verification_status = verified`** and otherwise return `403`:
+> - `POST /business/wallet/topup`
+> - `POST /business/shifts`, `PATCH /business/shifts/:id`, `PATCH /business/shifts/:id/publish`, `PATCH /business/shifts/:id/cancel`
+> - `PATCH /business/applications/:id/{shortlist,accept,reject}`
+> - `POST /payments/shifts/:shiftId/settle` (see [Payments](#payments))
+>
+> `403` body: `{ "success": false, "message": "Your business profile must be verified by an admin first" }` (or `"Complete your business profile to continue"` when no profile exists).
+
+> **Shift moderation:** Submitting a shift does **not** make it instantly visible. It enters `pending_approval` and an admin must approve it (`pending_approval` → `published`) before workers can see/apply. Rejection returns it to `draft` for the business to edit and resubmit (see [Admin](#admin)).
 
 ### Shift status lifecycle
 `draft` → `pending_approval` (submitted) → `published` (admin-approved, worker-visible) → `applications_open` → … On rejection a shift returns to `draft`.
@@ -1207,7 +1295,9 @@ Step 2 — saves operating location and zone (screen 4).
 
 ### PATCH `/business/profile/documents`
 
-Step 3 — submits verification documents; moves `verification_status` to `pending` (screen 5). Optional/skippable.
+Step 3 — submits verification documents; moves `verification_status` to `pending` (screen 5). Required before the business can perform impactful actions (see the verification gate above).
+
+Upload each file first via [`POST /upload/presign`](#post-uploadpresign) with `purpose` = `trade_license` or `business_doc`, push it to Cloudinary, then send the resulting `secure_url`(s) here.
 
 **Body:** `trade_license_url` (URL), `business_doc_url` (URL) — at least one required.
 
@@ -1224,6 +1314,59 @@ Step 4 — perk/attire toggles shown to workers (screen 6).
 **Body (all optional booleans):** `meal_included`, `transport_support`, `female_friendly`, `uniform_required`.
 
 **Response `200`** — `"Preferences saved"`.
+
+---
+
+### GET `/business/wallet`
+
+Business wallet snapshot — funds shift escrow. Auto-creates the wallet on first access (seeded ৳500). Role: `business`.
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Wallet fetched",
+  "data": {
+    "id": "uuid",
+    "balance": "500.00",
+    "held": "0.00",
+    "total_spent": "0.00",
+    "currency": "BDT"
+  }
+}
+```
+| Field | Meaning |
+|---|---|
+| `balance` | Spendable funds (can be escrowed into a new shift) |
+| `held` | Currently escrowed across active/pending shifts |
+| `total_spent` | Lifetime paid out to workers at settlement |
+
+**Errors:** `404 Create your business profile first` (no profile yet).
+
+---
+
+### POST `/business/wallet/topup`
+
+Adds funds to the wallet's spendable `balance`. Role: `business`.
+
+> **Placeholder funding.** The credit is applied **instantly** with no external capture. Real MFS corporate gateway authorization (bKash/Nagad) is wired in later; `method` is recorded for the log only.
+
+**Body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `amount` | number | ✅ | > 0, minimum **৳100** |
+| `method` | enum | — | `bkash` \| `nagad` \| `bank_transfer` |
+
+**Response `200`** — `"Wallet topped up"`, with the updated wallet (same shape as GET).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `400` | `Minimum top-up is ৳100` | `amount` below minimum |
+| `404` | `Create your business profile first` | No business profile yet |
+| `422` | `Validation failed` | Invalid/missing fields |
 
 ---
 
@@ -1253,9 +1396,11 @@ Home dashboard counters (screen 8).
 
 ---
 
+> **Escrow gate (screen 7).** Submitting a shift for review reserves its full estimated cost (`pay_amount × workers_needed`) from the business wallet — `balance` moves into `held`. The submit is rejected with `402` if the wallet can't cover it. Drafts hold nothing. The hold is **refunded** if the shift is cancelled or its post is rejected, and **released** at settlement (paid workers are spent; unspent no-show/unfilled portion returns to `balance`). A new business wallet is auto-created on first access/submit, seeded with a starting balance of **৳500**. Read it via [GET `/business/wallet`](#get-businesswallet) and add funds via [POST `/business/wallet/topup`](#post-businesswallettopup) — top-up is currently an **instant manual credit** (no external capture); real MFS corporate gateway authorization is wired in later.
+
 ### POST `/business/shifts`
 
-Creates a shift (create-shift wizard, screens 9–11). Submits it for admin review (`pending_approval`) unless `draft: true`. A shift becomes worker-visible only after an admin approves it.
+Creates a shift (create-shift wizard, screens 9–11). Submits it for admin review (`pending_approval`) unless `draft: true`. A shift becomes worker-visible only after an admin approves it. Submitting (not `draft`) **escrows the shift cost** — see the note above.
 
 **Body**
 
@@ -1287,6 +1432,7 @@ Creates a shift (create-shift wizard, screens 9–11). Submits it for admin revi
 |---|---|---|
 | `400` | `Invalid category` / `Invalid zone` | Reference id not found/inactive |
 | `400` | `Shift date cannot be in the past` | `shift_date` < today |
+| `402` | `Insufficient wallet balance to publish this shift. …` | Wallet can't cover the escrow (only when not `draft`) |
 | `404` | `Create your business profile first` | No business profile yet |
 | `422` | `Validation failed` | Invalid/missing fields |
 
@@ -1298,7 +1444,7 @@ Lists the business's own shifts, paginated, newest first.
 
 **Query:** `status` (any shift status), `page` (default 1), `limit` (default 10, max 50).
 
-**Response `200`** — `{ items: [...], pagination: {...} }`. Each item carries `filled`, `capacity`, `is_full`, and `applicants_waiting`.
+**Response `200`** — `{ items: [...], pagination: {...} }`. Each item carries `filled`, `capacity`, `is_full`, `applicants_waiting`, and `is_editable`.
 
 ---
 
@@ -1306,29 +1452,34 @@ Lists the business's own shifts, paginated, newest first.
 
 Single owned-shift detail with staffing counters (screens 13–14). `404 Shift not found` if missing or not owned.
 
+Counters on the returned shift:
+- `filled` — workers hired (accepted) · `capacity` — `workers_needed` · `is_full`
+- `applicants_waiting` — pending + shortlisted applicants
+- `is_editable` — `true` only while the shift is `draft`/`published`/`applications_open` **and** nobody is hired yet. Use it to show/hide the edit button; the journey bar is driven by `status`.
+
 ---
 
 ### PATCH `/business/shifts/:id`
 
-Edits an owned shift. Allowed only while `draft`/`published`/`applications_open`. Body accepts the same (optional) fields as create except `draft`.
+Edits an owned shift. Allowed only while `draft`/`published`/`applications_open` **and before any worker is hired** (mirrors `is_editable`). Body accepts the same (optional) fields as create except `draft`.
 
-**Errors:** `409 A '<state>' shift can no longer be edited`, `400` (invalid refs/date), `404`, `422`.
+**Errors:** `409 A '<state>' shift can no longer be edited`, `409 This shift can no longer be edited — a worker has already been hired`, `400` (invalid refs/date), `404`, `422`.
 
 ---
 
 ### PATCH `/business/shifts/:id/publish`
 
-Submits a draft shift for admin review (`draft` → `pending_approval`). It becomes worker-visible only after an admin approves it.
+Submits a draft shift for admin review (`draft` → `pending_approval`). It becomes worker-visible only after an admin approves it. **Escrows the shift cost** from the business wallet (see the escrow note above).
 
 **Response `200`** — `"Shift submitted for admin review"`.
 
-**Errors:** `409 Only draft shifts can be submitted`, `404`.
+**Errors:** `409 Only draft shifts can be submitted`, `402 Insufficient wallet balance to publish this shift. …`, `404`.
 
 ---
 
 ### PATCH `/business/shifts/:id/cancel`
 
-Cancels an owned shift. **Body:** `reason` (required, max 500).
+Cancels an owned shift. **Body:** `reason` (required, max 500). Any **held escrow is refunded** to the business wallet in the same transaction.
 
 **Errors:** `409 A '<state>' shift cannot be cancelled` (from `completed`/`payment_pending`/`paid`/`closed`/`cancelled`), `404`, `422`.
 
@@ -1483,7 +1634,7 @@ Mints a socket ticket for the authenticated caller. Requires `Authorization: Bea
 }
 ```
 
-The ticket is a JWT scoped to the `socket` audience — it cannot call REST endpoints and cannot be refreshed. `expires_in` is seconds.
+The ticket is a JWT scoped to the `socket` audience — it cannot call REST endpoints and cannot be refreshed. `expires_in` is seconds. It also captures the caller's **active role** at mint time, so socket chat (`chat:send` / `chat:read`) stays scoped to the same side as REST. After switching role, mint a fresh ticket and reconnect to chat as the other side.
 
 **Errors:** `401 Authorization token required` (missing/invalid access token).
 
@@ -1493,7 +1644,7 @@ On connect, the socket auto-joins a private room (`user:<id>`) — events are de
 
 | Event | Payload | When |
 |---|---|---|
-| `notification:new` | `{ notification, unread_count }` | Any new notification for this user (verification decision, hire/reject, shift moderation, …) |
+| `notification:new` | `{ notification, unread_count }` | Any new notification for this user (new applicant, verification decision, hire/reject, shift moderation, …) |
 | `chat:message` | `{ conversation_id, message }` | The counterpart sent a new chat message in a conversation this user is in |
 | `chat:read` | `{ conversation_id, reader_role, read_at, count }` | The counterpart opened/marked the thread read — update your sent-message read receipts |
 
@@ -1616,6 +1767,8 @@ Direct messaging between a worker and a business, **scoped per shift**. A conver
 
 Base path: `/api/v1/chat`. Requires `Authorization: Bearer <access_token>`. Every endpoint resolves the caller's **side** (`worker` or `business`) from their profile and rejects non-participants.
 
+**Scoped to the active account context.** A user who holds both a worker and a business profile sees **only** the conversations for their currently active role — worker chats and business chats are separate inboxes. The inbox listing, the unread badge, and per-conversation access (open / messages / send / read) are all filtered by the `active_role` of the access token; a worker-context request that targets a business-side conversation gets `404 Conversation not found` (and vice versa). Switch role (`POST /auth/switch-role`) to see the other side. Legacy tokens minted before `active_role` existed fall back to a merged view until refreshed.
+
 **Access gate:** a conversation can only be opened once an **application exists** for that `(shift, worker)` pair (any status — `pending`…`withdrawn`). No cold-messaging. Because applying requires a verified worker and posting a shift requires a verified business, both participants are implicitly verified.
 
 A `message` carries: `id`, `conversation_id`, `sender_user_id`, `sender_role` (`worker` · `business`), `body`, `read_at` (null until the recipient reads it), `created_at`.
@@ -1736,12 +1889,20 @@ Marks all incoming messages in the conversation as read and emits `chat:read` to
 
 ### GET `/chat/unread-count`
 
-Total unread messages across all the caller's conversations — bind to the chat badge.
+Total unread messages across the caller's conversations (scoped to the active account context) — bind to the chat badge.
+
+**Query Params**
+
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `shift_id` | UUID | no | Scopes the count to a single shift's conversations (per-shift badge). Omit for the global total. |
 
 **Response `200`**
 ```json
 { "success": true, "message": "Unread count fetched", "data": { "unread_count": 5 } }
 ```
+
+**Error `422`** — `shift_id must be a valid UUID`.
 
 ---
 
@@ -1749,7 +1910,7 @@ Total unread messages across all the caller's conversations — bind to the chat
 
 Money module — worker wallet + ledger, payout (withdrawal) requests, business shift settlement, and admin payout processing. Base path: `/api/v1/payments`. Every endpoint requires `Authorization: Bearer <access_token>`; the role differs per endpoint group (worker / business / admin).
 
-**Pay model (current):** flat per-worker pay. Settling a shift pays every hired worker the shift's `pay_amount`. No hourly math, surcharge, or escrow yet.
+**Pay model (current):** flat per-worker pay. Settling a shift pays every hired worker the shift's `pay_amount`. No hourly math or surcharge yet. Worker payouts are funded by the **business escrow** held when the shift was submitted (see [POST `/business/shifts`](#post-businessshifts)); settlement releases it.
 
 ### Money flow
 
@@ -1870,6 +2031,8 @@ Marks a live owned shift `completed`, which unlocks payment. Role: `business`.
 Settles a completed owned shift: pays the flat `pay_amount` to every hired worker **who actually checked in**, writes ledger credits, flips the shift to `paid`, and notifies the paid workers. Role: `business`, **admin-verified**. One-shot.
 
 > **Attendance-gated.** Only `accepted` workers with a `checked_in_at` stamp are paid. Accepted workers who never checked in are marked `no_show` (no payment) in the same transaction — settlement is the moment attendance is reconciled.
+
+> **Escrow release.** Worker pay is drawn from the shift's held escrow. The unspent remainder (no-show / unfilled slots) returns to the business wallet's spendable `balance`, and the shift's `escrow_status` flips to `released` — all inside the settlement transaction.
 
 **Response `200`**
 ```json
@@ -2115,7 +2278,7 @@ Moderation queue of shift posts awaiting approval (default `status=pending_appro
 
 ### PATCH `/admin/shifts/:shiftId`
 
-Approve or reject a shift post. Approve → `published` (worker-visible). Reject → `draft` (business edits and resubmits). Notifies the business owner either way.
+Approve or reject a shift post. Approve → `published` (worker-visible); the escrow stays held until settlement. Reject → `draft` (business edits and resubmits) and the **held escrow is refunded** to the business wallet in the same transaction. Notifies the business owner either way.
 
 | Param | In | Type | Required | Notes |
 |---|---|---|---|---|
@@ -2184,6 +2347,9 @@ Generates a signed upload credential. Valid for one upload only.
 | `nid_back` | National ID back photo | jpg, jpeg, png, pdf |
 | `selfie` | Live selfie for identity | jpg, jpeg, png |
 | `student_id` | Optional student ID | jpg, jpeg, png, pdf |
+| `trade_license` | Business trade license (verification) | jpg, jpeg, png, pdf |
+| `business_doc` | Other business verification document | jpg, jpeg, png, pdf |
+| `business_logo` | Business logo | jpg, jpeg, png, webp |
 
 **Response `200`**
 ```json

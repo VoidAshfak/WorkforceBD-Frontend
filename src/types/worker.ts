@@ -45,7 +45,10 @@ export type PresignPurpose =
   | "nid_front"
   | "nid_back"
   | "selfie"
-  | "student_id";
+  | "student_id"
+  | "trade_license"
+  | "business_doc"
+  | "business_logo";
 
 /** Signed upload credential returned by the BFF presign route. */
 export type PresignData = {

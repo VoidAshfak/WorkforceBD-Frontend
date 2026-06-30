@@ -1,0 +1,473 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ArrowLeft,
+  BadgeCheck,
+  CalendarDays,
+  Check,
+  Clock,
+  MapPin,
+  MessageCircle,
+  Star,
+  UserCheck,
+  Users,
+  X,
+} from "lucide-react";
+
+import Button from "@/components/ui/Button";
+import {
+  useDecideApplicantMutation,
+  useGetBusinessShiftQuery,
+  useGetShiftApplicantsQuery,
+} from "@/store/api/businessApi";
+import {
+  useGetChatUnreadCountQuery,
+  useOpenConversationMutation,
+} from "@/store/api/chatApi";
+import { formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
+import { createLogger } from "@/lib/logger";
+import type { Applicant, ApplicantDecision, BusinessShiftDetail as Shift } from "@/types/business";
+
+const log = createLogger("biz-shift-detail");
+
+type Tab = "details" | "applicants";
+
+/**
+ * Business view of an owned ("created") shift — its summary plus an applicant
+ * tracker. Reached at `/shifts/:id` when the active role is `business`. Apply
+ * notifications (`new_applicant`) deep-link here with `?tab=applicants`; each
+ * applicant row carries reputation, hire/shortlist/reject actions, and a message
+ * shortcut that opens the per-shift chat thread.
+ */
+export default function BusinessShiftDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const [tab, setTab] = useState<Tab>(params.get("tab") === "applicants" ? "applicants" : "details");
+
+  const { data: shift, isLoading, isError } = useGetBusinessShiftQuery(id);
+  const unread = useGetChatUnreadCountQuery({ shift_id: id });
+
+  if (isLoading) return <Skeleton onBack={() => router.back()} />;
+  if (isError || !shift) {
+    return (
+      <div className="flex h-full flex-col px-6 pt-6">
+        <BackBar onBack={() => router.back()} title="Shift" />
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <p className="text-[15px] font-semibold text-ink">Shift not found</p>
+          <p className="text-[14px] text-text-secondary">It may have been removed.</p>
+          <Button variant="secondary" onClick={() => router.replace("/")} className="mt-2">
+            Back to home
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col px-5 pt-5">
+      <BackBar onBack={() => router.back()} title={shift.title} status={shift.status} />
+
+      <Tabs
+        tab={tab}
+        onChange={setTab}
+        waiting={shift.applicants_waiting}
+        unread={unread.data ?? 0}
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto pb-6 pt-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {tab === "details" ? (
+          <Details shift={shift} />
+        ) : (
+          <ApplicantsTab shiftId={id} capacityFull={shift.is_full} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- Header --------------------------------- */
+
+function BackBar({ onBack, title, status }: { onBack: () => void; title: string; status?: string }) {
+  return (
+    <header className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
+        aria-label="Back"
+      >
+        <ArrowLeft size={18} />
+      </button>
+      <h1 className="min-w-0 flex-1 truncate text-lg font-bold text-ink">{title}</h1>
+      {status ? <StatusPill status={status} /> : null}
+    </header>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const open = status === "published" || status === "applications_open";
+  const review = status === "pending_approval";
+  const cls = open
+    ? "bg-emerald/10 text-emerald"
+    : review
+      ? "bg-warning/20 text-text-muted"
+      : "bg-black/[0.06] text-text-tertiary";
+  return (
+    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${cls}`}>
+      {open ? "Live" : status.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function Tabs({
+  tab,
+  onChange,
+  waiting,
+  unread,
+}: {
+  tab: Tab;
+  onChange: (t: Tab) => void;
+  waiting: number;
+  unread: number;
+}) {
+  return (
+    <div className="mt-4 flex gap-2 rounded-full bg-black/[0.05] p-1">
+      <TabButton active={tab === "details"} onClick={() => onChange("details")}>
+        Details
+      </TabButton>
+      <TabButton active={tab === "applicants"} onClick={() => onChange("applicants")}>
+        <span className="inline-flex items-center gap-1.5">
+          Applicants
+          {waiting > 0 ? (
+            <span className="rounded-full bg-sky px-1.5 text-[11px] font-bold text-white">{waiting}</span>
+          ) : null}
+          {unread > 0 ? (
+            <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-label="unread messages" />
+          ) : null}
+        </span>
+      </TabButton>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 rounded-full py-2 text-[13px] font-semibold transition-colors ${
+        active ? "bg-surface text-ink shadow-sm" : "text-text-secondary"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------- Details -------------------------------- */
+
+function Details({ shift }: { shift: Shift }) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-card border border-border bg-surface p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-[13px] font-semibold text-text-secondary">Pay / worker</span>
+          <span className="text-lg font-bold text-ink">{formatTaka(shift.pay_amount)}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Stat icon={Users} label="Hired" value={`${shift.filled}/${shift.capacity}`} />
+          <Stat icon={UserCheck} label="Waiting" value={String(shift.applicants_waiting)} />
+        </div>
+      </div>
+
+      <InfoRow icon={CalendarDays} text={formatShiftDate(shift.shift_date)} />
+      <InfoRow icon={Clock} text={formatTimeRange(shift.start_time, shift.end_time)} />
+      {shift.categories ? <InfoRow icon={Star} text={shift.categories.name} /> : null}
+      {shift.zones || shift.address ? (
+        <InfoRow icon={MapPin} text={[shift.zones?.name, shift.address].filter(Boolean).join(" · ")} />
+      ) : null}
+
+      {shift.description ? (
+        <div className="rounded-card border border-border bg-surface p-4">
+          <p className="text-[13px] font-semibold text-ink">Details</p>
+          <p className="mt-1 text-[14px] leading-6 text-text-secondary">{shift.description}</p>
+        </div>
+      ) : null}
+
+      {shift.meal_included || shift.transport_support ? (
+        <div className="flex flex-wrap gap-2">
+          {shift.meal_included ? <Perk label="🍽️ Meal included" /> : null}
+          {shift.transport_support ? <Perk label="🚌 Transport support" /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Stat({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-black/[0.04] p-3">
+      <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-secondary">
+        <Icon size={13} /> {label}
+      </span>
+      <p className="mt-1 text-[18px] font-bold text-ink">{value}</p>
+    </div>
+  );
+}
+
+function InfoRow({ icon: Icon, text }: { icon: typeof Users; text: string }) {
+  return (
+    <div className="flex items-center gap-3 px-1">
+      <Icon size={17} className="shrink-0 text-text-tertiary" />
+      <span className="text-[14px] text-ink">{text}</span>
+    </div>
+  );
+}
+
+function Perk({ label }: { label: string }) {
+  return (
+    <span className="rounded-full bg-cream px-3 py-1.5 text-[12px] font-medium text-text-muted">{label}</span>
+  );
+}
+
+/* ------------------------------ Applicants ------------------------------ */
+
+function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFull: boolean }) {
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isFetching, isError, refetch } = useGetShiftApplicantsQuery({
+    shiftId,
+    page,
+  });
+  const items = data?.items ?? [];
+  const hasMore = data ? data.pagination.page < data.pagination.total_pages : false;
+
+  if (isLoading) return <ApplicantsSkeleton />;
+  if (isError) {
+    return (
+      <button
+        type="button"
+        onClick={() => refetch()}
+        className="mx-auto block rounded-full bg-black/5 px-5 py-2.5 text-[14px] font-semibold text-ink active:scale-95"
+      >
+        Couldn&apos;t load applicants — retry
+      </button>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-card border border-dashed border-border bg-surface p-10 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-light">
+          <Users size={22} className="text-ink" />
+        </span>
+        <p className="max-w-xs text-[13px] text-text-secondary">
+          No applicants yet. You&apos;ll be notified the moment someone applies.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <ul className="space-y-3">
+      {items.map((a) => (
+        <ApplicantRow key={a.id} applicant={a} shiftId={shiftId} capacityFull={capacityFull} />
+      ))}
+      {hasMore ? (
+        <li>
+          <button
+            type="button"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={isFetching}
+            className="mx-auto block rounded-full bg-black/5 px-5 py-2.5 text-[14px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+          >
+            {isFetching ? "Loading…" : "Load more"}
+          </button>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+function ApplicantRow({
+  applicant,
+  shiftId,
+  capacityFull,
+}: {
+  applicant: Applicant;
+  shiftId: string;
+  capacityFull: boolean;
+}) {
+  const router = useRouter();
+  const w = applicant.worker_profiles;
+  const [decide, { isLoading: deciding }] = useDecideApplicantMutation();
+  const [openConversation, { isLoading: opening }] = useOpenConversationMutation();
+  const [error, setError] = useState<string | null>(null);
+
+  const pending = applicant.status === "pending";
+  const shortlisted = applicant.status === "shortlisted";
+  const actionable = pending || shortlisted;
+
+  const act = async (decision: ApplicantDecision) => {
+    setError(null);
+    try {
+      await decide({ id: applicant.id, decision, shiftId }).unwrap();
+    } catch (err) {
+      setError((err as { data?: { message?: string } })?.data?.message ?? "Couldn't update.");
+    }
+  };
+
+  const message = async () => {
+    setError(null);
+    try {
+      const conv = await openConversation({ shift_id: shiftId, worker_profile_id: w.id }).unwrap();
+      router.push(`/chat/${conv.id}`);
+    } catch (err) {
+      log.warn("open conversation failed", { status: (err as { status?: number })?.status });
+      setError((err as { data?: { message?: string } })?.data?.message ?? "Couldn't open chat.");
+    }
+  };
+
+  return (
+    <li className="rounded-card border border-border bg-surface p-3.5">
+      <div className="flex items-start gap-3">
+        <Avatar name={w.full_name} src={w.profile_picture} />
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-1 text-[14px] font-bold text-ink">
+            <span className="truncate">{w.full_name ?? "Worker"}</span>
+            {w.verification_status === "verified" ? (
+              <BadgeCheck size={14} className="shrink-0 text-sky" />
+            ) : null}
+          </p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px] text-text-secondary">
+            <span className="inline-flex items-center gap-0.5 font-semibold text-ink">
+              <Star size={12} className="text-brand-dark" /> {w.reliability_score}
+            </span>
+            <span>{w.attendance_rate}% attendance</span>
+            <span>{w.completed_shift_count} shifts</span>
+            {w.no_show_count > 0 ? <span className="text-danger">{w.no_show_count} no-show</span> : null}
+          </div>
+        </div>
+        <ApplicantStatusTag status={applicant.status} />
+      </div>
+
+      {applicant.note ? (
+        <p className="mt-2 rounded-xl bg-black/[0.03] p-2.5 text-[13px] text-text-secondary">
+          “{applicant.note}”
+        </p>
+      ) : null}
+
+      {error ? <p className="mt-2 text-[12px] font-medium text-danger">{error}</p> : null}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={message}
+          disabled={opening}
+          className="flex h-9 items-center gap-1.5 rounded-full border border-border px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+        >
+          <MessageCircle size={15} /> Message
+        </button>
+
+        {actionable ? (
+          <>
+            <button
+              type="button"
+              onClick={() => act("reject")}
+              disabled={deciding}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-danger/10 text-danger active:scale-90 disabled:opacity-50"
+              aria-label="Reject"
+            >
+              <X size={16} />
+            </button>
+            {pending ? (
+              <button
+                type="button"
+                onClick={() => act("shortlist")}
+                disabled={deciding}
+                className="flex h-9 items-center rounded-full bg-black/[0.06] px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+              >
+                Shortlist
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => act("accept")}
+              disabled={deciding || capacityFull}
+              className="ml-auto flex h-9 items-center gap-1.5 rounded-full bg-ink px-4 text-[13px] font-semibold text-white active:scale-95 disabled:opacity-40"
+            >
+              <Check size={15} /> {capacityFull ? "Full" : "Hire"}
+            </button>
+          </>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function ApplicantStatusTag({ status }: { status: string }) {
+  if (status === "pending") return null;
+  const map: Record<string, string> = {
+    shortlisted: "bg-sky/10 text-sky",
+    accepted: "bg-emerald/10 text-emerald",
+    rejected: "bg-danger/10 text-danger",
+    withdrawn: "bg-black/[0.06] text-text-tertiary",
+    no_show: "bg-danger/10 text-danger",
+  };
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+        map[status] ?? "bg-black/[0.06] text-text-tertiary"
+      }`}
+    >
+      {status.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function Avatar({ name, src }: { name: string | null; src: string | null }) {
+  if (src) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={src} alt={name ?? "Worker"} className="h-11 w-11 shrink-0 rounded-full object-cover" />;
+  }
+  const initial = (name ?? "?").trim().charAt(0).toUpperCase();
+  return (
+    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-light text-[16px] font-bold text-ink">
+      {initial}
+    </span>
+  );
+}
+
+/* ------------------------------ Skeletons ------------------------------- */
+
+function Skeleton({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="flex h-full flex-col px-5 pt-5">
+      <BackBar onBack={onBack} title="Loading…" />
+      <div className="mt-4 h-9 animate-pulse rounded-full bg-black/[0.05]" />
+      <div className="mt-4 space-y-3">
+        <div className="h-28 animate-pulse rounded-card bg-black/[0.05]" />
+        <div className="h-10 animate-pulse rounded-card bg-black/[0.05]" />
+        <div className="h-10 animate-pulse rounded-card bg-black/[0.05]" />
+      </div>
+    </div>
+  );
+}
+
+function ApplicantsSkeleton() {
+  return (
+    <ul className="space-y-3">
+      {[0, 1, 2].map((i) => (
+        <li key={i} className="h-[120px] animate-pulse rounded-card bg-black/[0.05]" />
+      ))}
+    </ul>
+  );
+}

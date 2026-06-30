@@ -6,7 +6,16 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("upload:presign");
 
-const PURPOSES = ["profile_picture", "nid_front", "nid_back", "selfie", "student_id"];
+const PURPOSES = [
+  "profile_picture",
+  "nid_front",
+  "nid_back",
+  "selfie",
+  "student_id",
+  "trade_license",
+  "business_doc",
+  "business_logo",
+];
 
 /**
  * `POST /api/upload/presign` — returns a one-shot Cloudinary signed credential.

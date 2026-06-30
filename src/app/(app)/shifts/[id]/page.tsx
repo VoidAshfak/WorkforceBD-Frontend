@@ -16,6 +16,7 @@ import {
 
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
 import ApplicationDetail from "@/components/shifts/ApplicationDetail";
+import BusinessShiftDetail from "@/components/business/BusinessShiftDetail";
 import Button from "@/components/ui/Button";
 import { useAppSelector } from "@/store/hooks";
 import { useApplyToShiftMutation, useGetShiftQuery } from "@/store/api/shiftsApi";
@@ -27,8 +28,17 @@ import type { ApplicationStatus, Shift } from "@/types/shift";
 const log = createLogger("shift:detail");
 
 export default function ShiftDetailPage() {
-  const router = useRouter();
   const { id } = useParams<{ id: string }>();
+  const activeRole = useAppSelector((s) => s.auth.activeRole);
+
+  // Same route, role-scoped view: a business owns the shift (manage applicants);
+  // a worker is discovering it (apply / track). The two hit different backends.
+  if (activeRole === "business") return <BusinessShiftDetail id={id} />;
+  return <WorkerShiftDetailPage id={id} />;
+}
+
+function WorkerShiftDetailPage({ id }: { id: string }) {
+  const router = useRouter();
   const { data: shift, isLoading, isError } = useGetShiftQuery(id);
 
   // The applied view is built to fit the frame exactly (drawers hold the depth),
