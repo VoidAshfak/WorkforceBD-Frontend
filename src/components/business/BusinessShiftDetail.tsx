@@ -177,8 +177,31 @@ function TabButton({
 /* ------------------------------- Details -------------------------------- */
 
 function Details({ shift }: { shift: Shift }) {
+  const cb = shift.cost_breakdown;
+  const benefits = [
+    shift.meal_included && "🍽️ Meal included",
+    shift.transport_support && "🚌 Transport support",
+    shift.uniform_provided && "👕 Uniform provided",
+    shift.tips_expected && "💵 Tips expected",
+  ].filter(Boolean) as string[];
+  const requirements = [
+    shift.experience_required && "🎯 Experience required",
+    shift.customer_facing && "🙋 Customer-facing",
+    ...(shift.languages ?? []).map((l) => `🗣️ ${l}`),
+  ].filter(Boolean) as string[];
+  const hasOnsite = shift.reporting_details || shift.dress_code || shift.manager_contact;
+
   return (
     <div className="space-y-4">
+      {shift.is_urgent || shift.is_large_request ? (
+        <div className="flex flex-wrap gap-2">
+          {shift.is_urgent ? <Badge tone="bg-danger/10 text-danger" label="🚨 Urgent" /> : null}
+          {shift.is_large_request ? (
+            <Badge tone="bg-brand-light text-text-muted" label={`👥 Large request · ${shift.capacity}`} />
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="rounded-card border border-border bg-surface p-4">
         <div className="flex items-center justify-between">
           <span className="text-[13px] font-semibold text-text-secondary">Pay / worker</span>
@@ -189,6 +212,24 @@ function Details({ shift }: { shift: Shift }) {
           <Stat icon={UserCheck} label="Waiting" value={String(shift.applicants_waiting)} />
         </div>
       </div>
+
+      {/* Compensation breakdown */}
+      {cb ? (
+        <div className="rounded-card border border-border bg-surface p-4">
+          <p className="mb-2 text-[13px] font-semibold text-ink">Compensation</p>
+          <div className="space-y-1.5 text-[13px]">
+            <CostLine label={`Worker pay × ${cb.workers_needed}`} value={cb.total_worker_pay} />
+            <CostLine label="Platform fee (10%)" value={cb.platform_fee} muted />
+            <div className="flex items-center justify-between border-t border-border pt-1.5">
+              <span className="font-semibold text-ink">Total cost</span>
+              <span className="font-bold text-ink">{formatTaka(cb.total_cost)}</span>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-text-tertiary">
+            {formatTaka(cb.total_worker_pay)} held now; the fee is charged later.
+          </p>
+        </div>
+      ) : null}
 
       <InfoRow icon={CalendarDays} text={formatShiftDate(shift.shift_date)} />
       <InfoRow icon={Clock} text={formatTimeRange(shift.start_time, shift.end_time)} />
@@ -204,12 +245,59 @@ function Details({ shift }: { shift: Shift }) {
         </div>
       ) : null}
 
-      {shift.meal_included || shift.transport_support ? (
-        <div className="flex flex-wrap gap-2">
-          {shift.meal_included ? <Perk label="🍽️ Meal included" /> : null}
-          {shift.transport_support ? <Perk label="🚌 Transport support" /> : null}
+      {benefits.length > 0 ? (
+        <ChipSection title="Benefits" items={benefits} />
+      ) : null}
+      {requirements.length > 0 ? (
+        <ChipSection title="Requirements" items={requirements} />
+      ) : null}
+
+      {hasOnsite ? (
+        <div className="rounded-card border border-border bg-surface p-4">
+          <p className="text-[13px] font-semibold text-ink">On-site</p>
+          <div className="mt-1.5 space-y-1.5 text-[14px] leading-6 text-text-secondary">
+            {shift.reporting_details ? <p>{shift.reporting_details}</p> : null}
+            {shift.dress_code ? (
+              <p>
+                <span className="font-medium text-ink">Dress code:</span> {shift.dress_code}
+              </p>
+            ) : null}
+            {shift.manager_contact ? (
+              <p>
+                <span className="font-medium text-ink">Manager:</span> {shift.manager_contact}
+              </p>
+            ) : null}
+          </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function Badge({ tone, label }: { tone: string; label: string }) {
+  return (
+    <span className={`rounded-full px-3 py-1.5 text-[12px] font-bold ${tone}`}>{label}</span>
+  );
+}
+
+function CostLine({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={muted ? "text-text-tertiary" : "text-text-secondary"}>{label}</span>
+      <span className={muted ? "text-text-secondary" : "font-semibold text-ink"}>{formatTaka(value)}</span>
+    </div>
+  );
+}
+
+function ChipSection({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <p className="mb-2 text-[13px] font-semibold text-ink">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((label) => (
+          <Perk key={label} label={label} />
+        ))}
+      </div>
     </div>
   );
 }

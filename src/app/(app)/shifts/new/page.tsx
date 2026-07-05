@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm, useWatch, Controller } from "react-hook-form";
+import { useForm, useWatch, Controller, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Loader2, Minus, Plus, ShieldCheck, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, ShieldCheck, Users, Wallet, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import { useAppSelector } from "@/store/hooks";
@@ -34,6 +34,14 @@ const GENDERS = [
   { value: "male", label: "Male" },
   { value: "female", label: "Female" },
 ] as const;
+
+/** Common languages a customer-facing shift might ask for (multi-select). */
+const LANGUAGES = ["Bangla", "English", "Hindi", "Arabic", "Chinese"] as const;
+
+/** Backend charges a 10% platform fee on total worker pay (fee capture deferred). */
+const PLATFORM_FEE_RATE = 0.1;
+/** `workers_needed` above this is flagged `is_large_request` by the backend. */
+const LARGE_REQUEST_THRESHOLD = 20;
 
 /**
  * Create-shift route. Gates on the business verification state — posting a shift
@@ -106,31 +114,65 @@ function CreateShiftForm() {
       gender_preference: "prefer_not_to_say",
       meal_included: false,
       transport_support: false,
+      uniform_provided: false,
+      tips_expected: false,
+      experience_required: false,
+      customer_facing: false,
+      languages: [],
+      reporting_details: "",
+      dress_code: "",
+      manager_contact: "",
+      is_urgent: false,
     },
   });
 
   const today = new Date().toISOString().slice(0, 10);
   const [payRaw, workersRaw] = useWatch({ control, name: ["pay_amount", "workers_needed"] });
-  const escrow = (Number(payRaw) || 0) * (Number(workersRaw) || 0);
+  const pay = Number(payRaw) || 0;
+  const workers = Number(workersRaw) || 0;
+
+  // Client-side mirror of the backend `cost_breakdown`. Only the worker pay is
+  // escrowed today; the 10% platform fee is deferred with the payment gateway.
+  const totalWorkerPay = pay * workers;
+  const platformFee = Math.round(totalWorkerPay * PLATFORM_FEE_RATE);
+  const totalCost = totalWorkerPay + platformFee;
+  const largeRequest = workers > LARGE_REQUEST_THRESHOLD;
+
   const balance = Number(wallet.data?.balance ?? 0);
-  const underfunded = escrow > 0 && escrow > balance;
+  const underfunded = totalWorkerPay > 0 && totalWorkerPay > balance;
+
+  // A near-duplicate (same category + date + start time) returns 409; we then
+  // offer a one-tap "Post anyway" that resubmits with `allow_duplicate: true`.
+  const [dupPrompt, setDupPrompt] = useState(false);
 
   const apiMessage = useMemo(() => {
     if (!error) return null;
     return (error as { data?: { message?: string } })?.data?.message ?? "Couldn't create the shift. Try again.";
   }, [error]);
 
-  const submit = (draft: boolean) =>
-    handleSubmit(async (values) => {
-      try {
-        const shift = await createShift({ ...values, draft }).unwrap();
-        log.info("shift created", { id: shift.id, draft });
-        router.replace(`/shifts/${shift.id}`);
-      } catch (err) {
-        log.warn("create failed", { draft, status: (err as { status?: number })?.status });
-        // Error surfaces via `apiMessage`; keep the user on the form to fix/retry.
+  const run = async (values: CreateShiftInput, draft: boolean, allowDuplicate: boolean) => {
+    setDupPrompt(false);
+    try {
+      const shift = await createShift({
+        ...values,
+        draft,
+        allow_duplicate: allowDuplicate || undefined,
+      }).unwrap();
+      log.info("shift created", { id: shift.id, draft });
+      router.replace(`/shifts/${shift.id}`);
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 409 && !draft) {
+        setDupPrompt(true);
+        return;
       }
-    });
+      log.warn("create failed", { draft, status });
+      // Other errors surface via `apiMessage`; keep the user on the form to retry.
+    }
+  };
+
+  const submit = (draft: boolean) => handleSubmit((values) => run(values, draft, false));
+  const submitAnyway = handleSubmit((values) => run(values, false, true));
 
   return (
     <div className="flex min-h-full flex-col">
@@ -197,6 +239,17 @@ function CreateShiftForm() {
           />
         </Field>
 
+        {/* Urgent / emergency staffing */}
+        <div className="mt-5">
+          <Controller
+            control={control}
+            name="is_urgent"
+            render={({ field }) => (
+              <Toggle label="🚨 Urgent — emergency staffing" checked={!!field.value} onChange={field.onChange} />
+            )}
+          />
+        </div>
+
         {/* Date */}
         <Field label="Date" error={errors.shift_date?.message}>
           <input type="date" min={today} {...register("shift_date")} className={inputCls} />
@@ -234,6 +287,12 @@ function CreateShiftForm() {
             />
           </Field>
         </div>
+        {largeRequest ? (
+          <p className="mt-2 flex items-start gap-2 rounded-xl bg-brand-light/60 p-2.5 text-[12px] text-text-muted">
+            <Users size={14} className="mt-0.5 shrink-0" />
+            Large request ({workers} workers) — expect it to take longer to fully staff.
+          </p>
+        ) : null}
 
         {/* Role type (optional) */}
         <Field label="Role" optional error={errors.role_type?.message}>
@@ -260,25 +319,73 @@ function CreateShiftForm() {
           />
         </Field>
 
-        {/* Perks */}
-        <Field label="Perks" optional>
+        {/* Benefits */}
+        <Field label="Benefits" optional>
           <div className="space-y-2.5">
-            <Controller
-              control={control}
-              name="meal_included"
-              render={({ field }) => (
-                <Toggle label="🍽️ Meal included" checked={!!field.value} onChange={field.onChange} />
-              )}
-            />
-            <Controller
-              control={control}
-              name="transport_support"
-              render={({ field }) => (
-                <Toggle label="🚌 Transport support" checked={!!field.value} onChange={field.onChange} />
-              )}
-            />
+            <ToggleField control={control} name="meal_included" label="🍽️ Meal included" />
+            <ToggleField control={control} name="transport_support" label="🚌 Transport support" />
+            <ToggleField control={control} name="uniform_provided" label="👕 Uniform provided" />
+            <ToggleField control={control} name="tips_expected" label="💵 Tips expected" />
           </div>
         </Field>
+
+        {/* Requirements */}
+        <Field label="Requirements" optional>
+          <div className="space-y-2.5">
+            <ToggleField control={control} name="experience_required" label="🎯 Experience required" />
+            <ToggleField control={control} name="customer_facing" label="🙋 Customer-facing role" />
+          </div>
+        </Field>
+
+        {/* Languages */}
+        <Field label="Languages" optional error={errors.languages?.message}>
+          <Controller
+            control={control}
+            name="languages"
+            render={({ field }) => {
+              const selected = field.value ?? [];
+              const toggle = (lang: string) =>
+                field.onChange(
+                  selected.includes(lang)
+                    ? selected.filter((l) => l !== lang)
+                    : [...selected, lang],
+                );
+              return (
+                <div className="flex flex-wrap gap-2">
+                  {LANGUAGES.map((lang) => (
+                    <Chip key={lang} label={lang} selected={selected.includes(lang)} onClick={() => toggle(lang)} />
+                  ))}
+                </div>
+              );
+            }}
+          />
+        </Field>
+
+        {/* On-site instructions */}
+        <Field label="Reporting details" optional error={errors.reporting_details?.message}>
+          <textarea
+            {...register("reporting_details")}
+            placeholder="Where to report, who to ask for, gate/entrance…"
+            rows={2}
+            maxLength={1000}
+            className={`${inputCls} h-auto resize-none py-3`}
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Dress code" optional error={errors.dress_code?.message}>
+            <input {...register("dress_code")} placeholder="e.g. Black formals" maxLength={500} className={inputCls} />
+          </Field>
+          <Field label="Manager contact" optional error={errors.manager_contact?.message}>
+            <input
+              {...register("manager_contact")}
+              placeholder="On-site phone"
+              inputMode="tel"
+              maxLength={20}
+              className={inputCls}
+            />
+          </Field>
+        </div>
 
         {/* Description (optional) */}
         <Field label="Details" optional error={errors.description?.message}>
@@ -291,24 +398,62 @@ function CreateShiftForm() {
           />
         </Field>
 
-        {apiMessage ? (
+        {apiMessage && !dupPrompt ? (
           <p className="mt-4 rounded-xl bg-danger/10 p-3 text-[13px] font-medium text-danger">{apiMessage}</p>
         ) : null}
       </form>
 
-      {/* Sticky footer: escrow summary + actions */}
+      {/* Sticky footer: cost breakdown + actions */}
       <footer className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md border-t border-border bg-surface px-5 pb-6 pt-3">
-        {escrow > 0 ? (
-          <div className="mb-3 flex items-center justify-between text-[13px]">
-            <span className="flex items-center gap-1.5 text-text-secondary">
-              <Wallet size={14} /> Escrow on submit
-            </span>
-            <span className={`font-bold ${underfunded ? "text-danger" : "text-ink"}`}>
-              {formatTaka(escrow)}
-              {underfunded ? <span className="ml-1 font-normal">· top up needed</span> : null}
-            </span>
+        {totalWorkerPay > 0 ? (
+          <div className="mb-3 space-y-1 text-[13px]">
+            <CostLine label="Total worker pay" value={totalWorkerPay} />
+            <CostLine label="Platform fee (10%)" value={platformFee} muted />
+            <div className="flex items-center justify-between border-t border-border pt-1">
+              <span className="font-semibold text-ink">Total cost</span>
+              <span className="font-bold text-ink">{formatTaka(totalCost)}</span>
+            </div>
+            <div className="flex items-center justify-between pt-1 text-text-secondary">
+              <span className="flex items-center gap-1.5">
+                <Wallet size={13} /> Escrowed on submit
+              </span>
+              <span className={`font-semibold ${underfunded ? "text-danger" : "text-ink"}`}>
+                {formatTaka(totalWorkerPay)}
+                {underfunded ? <span className="ml-1 font-normal">· top up needed</span> : null}
+              </span>
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              Only worker pay is held now; the fee is charged later.
+            </p>
           </div>
         ) : null}
+
+        {dupPrompt ? (
+          <div className="mb-3 rounded-xl bg-warning/15 p-3">
+            <p className="flex items-start gap-2 text-[13px] font-medium text-text-muted">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+              You already have a similar shift (same category, date &amp; start time).
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDupPrompt(false)}
+                className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-black/[0.06] text-[13px] font-semibold text-ink active:scale-95"
+              >
+                <X size={14} /> Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitAnyway}
+                disabled={isLoading}
+                className="flex h-9 flex-[1.4] items-center justify-center rounded-full bg-ink text-[13px] font-semibold text-white active:scale-95 disabled:opacity-50"
+              >
+                Post anyway
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex gap-3">
           <Button
             type="button"
@@ -497,6 +642,58 @@ function Toggle({
         />
       </span>
     </button>
+  );
+}
+
+/** Boolean toggle bound to a form field (thin Controller wrapper). */
+type BoolField =
+  | "meal_included"
+  | "transport_support"
+  | "uniform_provided"
+  | "tips_expected"
+  | "experience_required"
+  | "customer_facing";
+
+function ToggleField({
+  control,
+  name,
+  label,
+}: {
+  control: Control<CreateShiftFormInput>;
+  name: BoolField;
+  label: string;
+}) {
+  return (
+    <Controller
+      control={control}
+      name={name}
+      render={({ field }) => (
+        <Toggle label={label} checked={!!field.value} onChange={field.onChange} />
+      )}
+    />
+  );
+}
+
+function Chip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-3.5 py-2 text-[13px] font-medium transition-colors active:scale-95 ${
+        selected ? "border-ink bg-ink text-white" : "border-border bg-surface text-ink"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function CostLine({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={muted ? "text-text-tertiary" : "text-text-secondary"}>{label}</span>
+      <span className={muted ? "text-text-secondary" : "font-semibold text-ink"}>{formatTaka(value)}</span>
+    </div>
   );
 }
 

@@ -1417,14 +1417,24 @@ Creates a shift (create-shift wizard, screens 9–11). Submits it for admin revi
 | `role_type` | string | — | max 100, e.g. `Waiter` |
 | `description` | string | — | |
 | `gender_preference` | enum | — | `male` \| `female` \| `other` \| `prefer_not_to_say` |
-| `meal_included` | bool | — | default `false` |
-| `transport_support` | bool | — | default `false` |
+| `meal_included` | bool | — | benefit, default `false` |
+| `transport_support` | bool | — | benefit, default `false` |
+| `uniform_provided` | bool | — | benefit, default `false` |
+| `tips_expected` | bool | — | benefit, default `false` |
+| `experience_required` | bool | — | requirement, default `false` |
+| `languages` | string[] | — | requirement; up to 10, each 1–50 chars |
+| `customer_facing` | bool | — | requirement, default `false` |
+| `reporting_details` | string | — | on-site instructions, max 1000 |
+| `dress_code` | string | — | on-site instructions, max 500 |
+| `manager_contact` | string | — | max 20; defaults to the business profile's `manager_phone` |
+| `is_urgent` | bool | — | emergency staffing flag, default `false` |
 | `zone_id` | UUID | — | defaults to the business profile's zone |
 | `address` | string | — | defaults to the business profile address |
 | `landmark` | string | — | defaults to the business profile landmark |
 | `draft` | bool | — | `true` saves as `draft` instead of submitting for review |
+| `allow_duplicate` | bool | — | `true` bypasses the near-duplicate guard (see `409` below) |
 
-**Response `201`** — `"Shift submitted for admin review"` (status `pending_approval`) or `"Shift saved as draft"` (status `draft`), with the created shift.
+**Response `201`** — `"Shift submitted for admin review"` (status `pending_approval`) or `"Shift saved as draft"` (status `draft`), with the created shift (including its `cost_breakdown`, see GET below).
 
 **Errors**
 
@@ -1434,7 +1444,8 @@ Creates a shift (create-shift wizard, screens 9–11). Submits it for admin revi
 | `400` | `Shift date cannot be in the past` | `shift_date` < today |
 | `402` | `Insufficient wallet balance to publish this shift. …` | Wallet can't cover the escrow (only when not `draft`) |
 | `404` | `Create your business profile first` | No business profile yet |
-| `422` | `Validation failed` | Invalid/missing fields |
+| `409` | `You already have a similar shift … Resubmit with allow_duplicate=true …` | Same category + date + start time as a live shift; resend with `allow_duplicate: true` |
+| `422` | `Validation failed` (incl. `end_time must be after start_time`) | Invalid/missing fields, or `end_time` ≤ `start_time` |
 
 ---
 
@@ -1444,7 +1455,7 @@ Lists the business's own shifts, paginated, newest first.
 
 **Query:** `status` (any shift status), `page` (default 1), `limit` (default 10, max 50).
 
-**Response `200`** — `{ items: [...], pagination: {...} }`. Each item carries `filled`, `capacity`, `is_full`, `applicants_waiting`, and `is_editable`.
+**Response `200`** — `{ items: [...], pagination: {...} }`. Each item carries `filled`, `capacity`, `is_full`, `applicants_waiting`, `is_editable`, `is_large_request`, and `cost_breakdown`.
 
 ---
 
@@ -1456,14 +1467,16 @@ Counters on the returned shift:
 - `filled` — workers hired (accepted) · `capacity` — `workers_needed` · `is_full`
 - `applicants_waiting` — pending + shortlisted applicants
 - `is_editable` — `true` only while the shift is `draft`/`published`/`applications_open` **and** nobody is hired yet. Use it to show/hide the edit button; the journey bar is driven by `status`.
+- `is_large_request` — `true` when `workers_needed` exceeds the large-request threshold (20)
+- `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **only the worker pay is escrowed today** (fee capture is deferred with the payment gateway), so `total_cost` is what the business ultimately owes, not the current hold.
 
 ---
 
 ### PATCH `/business/shifts/:id`
 
-Edits an owned shift. Allowed only while `draft`/`published`/`applications_open` **and before any worker is hired** (mirrors `is_editable`). Body accepts the same (optional) fields as create except `draft`.
+Edits an owned shift. Allowed only while `draft`/`published`/`applications_open` **and before any worker is hired** (mirrors `is_editable`). Body accepts the same (optional) fields as create except `draft` and `allow_duplicate`. Editing `pay_amount`/`workers_needed` recomputes `platform_fee` (the escrow hold is unchanged).
 
-**Errors:** `409 A '<state>' shift can no longer be edited`, `409 This shift can no longer be edited — a worker has already been hired`, `400` (invalid refs/date), `404`, `422`.
+**Errors:** `409 A '<state>' shift can no longer be edited`, `409 This shift can no longer be edited — a worker has already been hired`, `400` (invalid refs/date), `404`, `422` (incl. `end_time must be after start_time`).
 
 ---
 

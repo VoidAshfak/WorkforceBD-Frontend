@@ -34,14 +34,36 @@ export const createShiftSchema = z
     role_type: z.string().trim().max(100).optional(),
     description: z.string().trim().max(2000).optional(),
     gender_preference: genderPreferenceSchema.optional(),
+    // Benefits.
     meal_included: z.boolean().default(false),
     transport_support: z.boolean().default(false),
+    uniform_provided: z.boolean().default(false),
+    tips_expected: z.boolean().default(false),
+    // Requirements.
+    experience_required: z.boolean().default(false),
+    customer_facing: z.boolean().default(false),
+    languages: z.array(z.string().trim().min(1).max(50)).max(10, "Up to 10 languages").optional(),
+    // On-site instructions.
+    reporting_details: z.string().trim().max(1000).optional(),
+    dress_code: z.string().trim().max(500).optional(),
+    // Defaults to the business profile's manager phone when absent.
+    manager_contact: z.string().trim().max(20).optional(),
+    // Emergency staffing flag.
+    is_urgent: z.boolean().default(false),
+    /** `true` bypasses the backend near-duplicate guard (409). */
+    allow_duplicate: z.boolean().optional(),
     /** `true` saves as a draft instead of submitting for admin review. */
     draft: z.boolean().optional(),
   })
   .refine((v) => v.shift_date >= new Date().toISOString().slice(0, 10), {
     message: "Shift date cannot be in the past",
     path: ["shift_date"],
+  })
+  // Mirror the backend's `end_time must be after start_time` (422). Only compare
+  // once both are well-formed so the field-level regex errors surface first.
+  .refine((v) => !HHMM.test(v.start_time) || !HHMM.test(v.end_time) || v.end_time > v.start_time, {
+    message: "End time must be after start time",
+    path: ["end_time"],
   });
 
 /* ----------------------------- Onboarding ------------------------------- */
