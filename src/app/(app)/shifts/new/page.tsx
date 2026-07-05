@@ -44,6 +44,19 @@ const PLATFORM_FEE_RATE = 0.1;
 const LARGE_REQUEST_THRESHOLD = 20;
 
 /**
+ * Wizard steps. `fields` are the ones validated (via RHF `trigger`) before the
+ * step can advance; the empty last step is the review + submit screen.
+ */
+const STEPS = [
+  { title: "Basics", fields: ["title", "category_id", "shift_type"] },
+  { title: "Schedule", fields: ["shift_date", "start_time", "end_time"] },
+  { title: "Pay & headcount", fields: ["pay_amount", "workers_needed"] },
+  { title: "Preferences", fields: ["role_type", "languages"] },
+  { title: "Instructions", fields: ["reporting_details", "dress_code", "manager_contact", "description"] },
+  { title: "Review", fields: [] },
+] as const satisfies ReadonlyArray<{ title: string; fields: readonly (keyof CreateShiftFormInput)[] }>;
+
+/**
  * Create-shift route. Gates on the business verification state — posting a shift
  * requires an admin-verified profile (the backend returns `403` otherwise), so
  * unverified/no-profile businesses get a clear nudge instead of the form.
@@ -99,6 +112,7 @@ function CreateShiftForm() {
     register,
     handleSubmit,
     control,
+    trigger,
     formState: { errors },
   } = useForm<CreateShiftFormInput, unknown, CreateShiftInput>({
     resolver: zodResolver(createShiftSchema),
@@ -127,9 +141,9 @@ function CreateShiftForm() {
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  const [payRaw, workersRaw] = useWatch({ control, name: ["pay_amount", "workers_needed"] });
-  const pay = Number(payRaw) || 0;
-  const workers = Number(workersRaw) || 0;
+  const values = useWatch({ control });
+  const pay = Number(values.pay_amount) || 0;
+  const workers = Number(values.workers_needed) || 0;
 
   // Client-side mirror of the backend `cost_breakdown`. Only the worker pay is
   // escrowed today; the 10% platform fee is deferred with the payment gateway.
@@ -141,20 +155,38 @@ function CreateShiftForm() {
   const balance = Number(wallet.data?.balance ?? 0);
   const underfunded = totalWorkerPay > 0 && totalWorkerPay > balance;
 
+  const categoryName = categories.data?.find((c) => c.id === values.category_id)?.name;
+
   // A near-duplicate (same category + date + start time) returns 409; we then
   // offer a one-tap "Post anyway" that resubmits with `allow_duplicate: true`.
   const [dupPrompt, setDupPrompt] = useState(false);
+
+  // Step-by-step wizard. Each step validates only its own fields before
+  // advancing (RHF `trigger`); the last step is the review + submit.
+  const [step, setStep] = useState(0);
+  const isLast = step === STEPS.length - 1;
+
+  const next = async () => {
+    const fields = STEPS[step].fields;
+    const ok = fields.length === 0 || (await trigger([...fields]));
+    if (ok) setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  };
+  const back = () => {
+    setDupPrompt(false);
+    if (step === 0) router.back();
+    else setStep((s) => s - 1);
+  };
 
   const apiMessage = useMemo(() => {
     if (!error) return null;
     return (error as { data?: { message?: string } })?.data?.message ?? "Couldn't create the shift. Try again.";
   }, [error]);
 
-  const run = async (values: CreateShiftInput, draft: boolean, allowDuplicate: boolean) => {
+  const run = async (formValues: CreateShiftInput, draft: boolean, allowDuplicate: boolean) => {
     setDupPrompt(false);
     try {
       const shift = await createShift({
-        ...values,
+        ...formValues,
         draft,
         allow_duplicate: allowDuplicate || undefined,
       }).unwrap();
@@ -171,24 +203,42 @@ function CreateShiftForm() {
     }
   };
 
-  const submit = (draft: boolean) => handleSubmit((values) => run(values, draft, false));
-  const submitAnyway = handleSubmit((values) => run(values, false, true));
+  const submit = (draft: boolean) => handleSubmit((v) => run(v, draft, false));
+  const submitAnyway = handleSubmit((v) => run(v, false, true));
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-10 flex items-center gap-3 bg-background/95 px-5 pb-3 pt-5 backdrop-blur">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
-          aria-label="Back"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <h1 className="text-lg font-bold text-ink">Create a shift</h1>
+      <header className="sticky top-0 z-10 bg-background/95 px-5 pb-3 pt-5 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={back}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/5 text-ink active:scale-95"
+            aria-label="Back"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-lg font-bold text-ink">{STEPS[step].title}</h1>
+            <p className="text-[12px] text-text-tertiary">
+              Step {step + 1} of {STEPS.length}
+            </p>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="mt-3 flex gap-1.5">
+          {STEPS.map((s, i) => (
+            <span
+              key={s.title}
+              className={`h-1 flex-1 rounded-full transition-colors ${i <= step ? "bg-ink" : "bg-black/10"}`}
+            />
+          ))}
+        </div>
       </header>
 
-      <form className="flex-1 px-5 pb-44 pt-2">
+      <form className="flex-1 px-5 pb-28 pt-4">
+        {step === 0 ? (
+          <>
         {/* Title */}
         <Field label="Shift title" error={errors.title?.message}>
           <input
@@ -249,7 +299,11 @@ function CreateShiftForm() {
             )}
           />
         </div>
+          </>
+        ) : null}
 
+        {step === 1 ? (
+          <>
         {/* Date */}
         <Field label="Date" error={errors.shift_date?.message}>
           <input type="date" min={today} {...register("shift_date")} className={inputCls} />
@@ -264,7 +318,11 @@ function CreateShiftForm() {
             <input type="time" {...register("end_time")} className={inputCls} />
           </Field>
         </div>
+          </>
+        ) : null}
 
+        {step === 2 ? (
+          <>
         {/* Pay + headcount */}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Pay / worker (৳)" error={errors.pay_amount?.message}>
@@ -293,7 +351,28 @@ function CreateShiftForm() {
             Large request ({workers} workers) — expect it to take longer to fully staff.
           </p>
         ) : null}
+        {totalWorkerPay > 0 ? (
+          <div className="mt-4 rounded-xl border border-border bg-surface p-3 text-[13px]">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-text-secondary">
+                <Wallet size={14} /> Escrow on submit
+              </span>
+              <span className={`font-bold ${underfunded ? "text-danger" : "text-ink"}`}>
+                {formatTaka(totalWorkerPay)}
+              </span>
+            </div>
+            {underfunded ? (
+              <p className="mt-1 text-[11px] text-danger">
+                Wallet balance {formatTaka(balance)} — top up needed before submitting.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+          </>
+        ) : null}
 
+        {step === 3 ? (
+          <>
         {/* Role type (optional) */}
         <Field label="Role" optional error={errors.role_type?.message}>
           <input {...register("role_type")} placeholder="e.g. Waiter" maxLength={100} className={inputCls} />
@@ -361,6 +440,11 @@ function CreateShiftForm() {
           />
         </Field>
 
+          </>
+        ) : null}
+
+        {step === 4 ? (
+          <>
         {/* On-site instructions */}
         <Field label="Reporting details" optional error={errors.reporting_details?.message}>
           <textarea
@@ -397,38 +481,61 @@ function CreateShiftForm() {
             className={`${inputCls} h-auto resize-none py-3`}
           />
         </Field>
+          </>
+        ) : null}
 
-        {apiMessage && !dupPrompt ? (
-          <p className="mt-4 rounded-xl bg-danger/10 p-3 text-[13px] font-medium text-danger">{apiMessage}</p>
+        {step === 5 ? (
+          <div className="space-y-4">
+            <div className="rounded-card border border-border bg-surface p-4">
+              <p className="text-[15px] font-bold text-ink">{values.title || "Untitled shift"}</p>
+              <div className="mt-2 space-y-1">
+                <ReviewLine label="Category" value={categoryName ?? "—"} />
+                <ReviewLine
+                  label="When"
+                  value={
+                    values.shift_date
+                      ? `${values.shift_date} · ${values.start_time}–${values.end_time}`
+                      : "—"
+                  }
+                />
+                <ReviewLine label="Workers" value={String(workers)} />
+                <ReviewLine label="Pay / worker" value={formatTaka(pay)} />
+                {values.is_urgent ? <ReviewLine label="Priority" value="🚨 Urgent" /> : null}
+              </div>
+            </div>
+
+            {/* Cost breakdown */}
+            <div className="space-y-1 rounded-card border border-border bg-surface p-4 text-[13px]">
+              <CostLine label="Total worker pay" value={totalWorkerPay} />
+              <CostLine label="Platform fee (10%)" value={platformFee} muted />
+              <div className="flex items-center justify-between border-t border-border pt-1">
+                <span className="font-semibold text-ink">Total cost</span>
+                <span className="font-bold text-ink">{formatTaka(totalCost)}</span>
+              </div>
+              <div className="flex items-center justify-between pt-1 text-text-secondary">
+                <span className="flex items-center gap-1.5">
+                  <Wallet size={13} /> Escrowed on submit
+                </span>
+                <span className={`font-semibold ${underfunded ? "text-danger" : "text-ink"}`}>
+                  {formatTaka(totalWorkerPay)}
+                  {underfunded ? <span className="ml-1 font-normal">· top up needed</span> : null}
+                </span>
+              </div>
+              <p className="text-[11px] text-text-tertiary">
+                Only worker pay is held now; the fee is charged later.
+              </p>
+            </div>
+
+            {apiMessage && !dupPrompt ? (
+              <p className="rounded-xl bg-danger/10 p-3 text-[13px] font-medium text-danger">{apiMessage}</p>
+            ) : null}
+          </div>
         ) : null}
       </form>
 
-      {/* Sticky footer: cost breakdown + actions */}
+      {/* Sticky footer: step navigation / final actions */}
       <footer className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md border-t border-border bg-surface px-5 pb-6 pt-3">
-        {totalWorkerPay > 0 ? (
-          <div className="mb-3 space-y-1 text-[13px]">
-            <CostLine label="Total worker pay" value={totalWorkerPay} />
-            <CostLine label="Platform fee (10%)" value={platformFee} muted />
-            <div className="flex items-center justify-between border-t border-border pt-1">
-              <span className="font-semibold text-ink">Total cost</span>
-              <span className="font-bold text-ink">{formatTaka(totalCost)}</span>
-            </div>
-            <div className="flex items-center justify-between pt-1 text-text-secondary">
-              <span className="flex items-center gap-1.5">
-                <Wallet size={13} /> Escrowed on submit
-              </span>
-              <span className={`font-semibold ${underfunded ? "text-danger" : "text-ink"}`}>
-                {formatTaka(totalWorkerPay)}
-                {underfunded ? <span className="ml-1 font-normal">· top up needed</span> : null}
-              </span>
-            </div>
-            <p className="text-[11px] text-text-tertiary">
-              Only worker pay is held now; the fee is charged later.
-            </p>
-          </div>
-        ) : null}
-
-        {dupPrompt ? (
+        {isLast && dupPrompt ? (
           <div className="mb-3 rounded-xl bg-warning/15 p-3">
             <p className="flex items-start gap-2 text-[13px] font-medium text-text-muted">
               <AlertTriangle size={15} className="mt-0.5 shrink-0" />
@@ -454,25 +561,31 @@ function CreateShiftForm() {
           </div>
         ) : null}
 
-        <div className="flex gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={submit(true)}
-            disabled={isLoading}
-            className="flex-1"
-          >
-            Save draft
+        {isLast ? (
+          <div className="flex gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={submit(true)}
+              disabled={isLoading}
+              className="flex-1"
+            >
+              Save draft
+            </Button>
+            <Button
+              type="button"
+              onClick={submit(false)}
+              loading={isLoading}
+              className="flex-[1.6]"
+            >
+              Submit for review
+            </Button>
+          </div>
+        ) : (
+          <Button type="button" onClick={next} className="w-full">
+            Continue
           </Button>
-          <Button
-            type="button"
-            onClick={submit(false)}
-            loading={isLoading}
-            className="flex-[1.6]"
-          >
-            Submit for review
-          </Button>
-        </div>
+        )}
       </footer>
     </div>
   );
@@ -693,6 +806,15 @@ function CostLine({ label, value, muted }: { label: string; value: number; muted
     <div className="flex items-center justify-between">
       <span className={muted ? "text-text-tertiary" : "text-text-secondary"}>{label}</span>
       <span className={muted ? "text-text-secondary" : "font-semibold text-ink"}>{formatTaka(value)}</span>
+    </div>
+  );
+}
+
+function ReviewLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-[13px]">
+      <span className="shrink-0 text-text-secondary">{label}</span>
+      <span className="truncate text-right font-medium text-ink">{value}</span>
     </div>
   );
 }
