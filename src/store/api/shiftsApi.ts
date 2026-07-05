@@ -1,6 +1,7 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import type {
+  ActivitySummary,
   Application,
   ApplicationStatus,
   CheckInMethod,
@@ -88,6 +89,12 @@ export const shiftsApi = createApi({
       providesTags: ["Application"],
     }),
 
+    getApplicationsSummary: build.query<ActivitySummary, void>({
+      query: () => ({ url: "/applications/summary", method: "GET" }),
+      transformResponse: (res: ApiEnvelope<ActivitySummary>) => res.data,
+      providesTags: ["Application"],
+    }),
+
     withdrawApplication: build.mutation<{ message: string }, string>({
       query: (id) => ({ url: `/applications/${id}/withdraw`, method: "PATCH" }),
       invalidatesTags: ["Application"],
@@ -131,6 +138,7 @@ export const {
   useGetShiftQuery,
   useApplyToShiftMutation,
   useGetApplicationsQuery,
+  useGetApplicationsSummaryQuery,
   useWithdrawApplicationMutation,
   useCheckInMutation,
   useCheckOutMutation,

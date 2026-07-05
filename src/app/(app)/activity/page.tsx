@@ -29,6 +29,7 @@ import { useAppSelector } from "@/store/hooks";
 import {
   useCheckOutMutation,
   useGetApplicationsQuery,
+  useGetApplicationsSummaryQuery,
   useWithdrawApplicationMutation,
 } from "@/store/api/shiftsApi";
 import { formatInstantTime, formatRelativeTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
@@ -134,6 +135,7 @@ function WorkerActivity() {
     page,
     limit: 10,
   });
+  const { data: summary } = useGetApplicationsSummaryQuery();
 
   const changeFilter = (next: ApplicationStatus | undefined) => {
     setStatus(next);
@@ -142,6 +144,12 @@ function WorkerActivity() {
 
   const items = data?.items ?? [];
   const hasMore = data ? data.pagination.page < data.pagination.total_pages : false;
+
+  /** Count shown on a filter pill — total for "All", else the per-status count. */
+  const tabCount = (value: ApplicationStatus | undefined): number | undefined => {
+    if (!summary) return undefined;
+    return value ? summary.applications.by_status[value] : summary.applications.total;
+  };
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden px-5 pt-4">
@@ -162,24 +170,38 @@ function WorkerActivity() {
 
       <header className="shrink-0">
         <h1 className="text-xl font-bold text-ink">Activity</h1>
-        <p className="text-[13px] text-text-secondary">Track every shift you&apos;ve applied to.</p>
+        <p className="text-[13px] text-text-secondary">
+          {summary && summary.applications.active > 0
+            ? `${summary.applications.active} active application${summary.applications.active === 1 ? "" : "s"}.`
+            : "Track every shift you've applied to."}
+        </p>
       </header>
 
       <div className="-mx-5 mt-3 flex shrink-0 gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((tab) => {
           const isActive = tab.value === status;
+          const count = tabCount(tab.value);
           return (
             <button
               key={tab.label}
               type="button"
               onClick={() => changeFilter(tab.value)}
-              className={`shrink-0 rounded-full border px-4 py-2 text-[14px] font-semibold transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-[14px] font-semibold transition-colors ${
                 isActive
                   ? "border-ink bg-ink text-white"
                   : "border-border bg-surface text-text-secondary hover:border-ink/30"
               }`}
             >
               {tab.label}
+              {count ? (
+                <span
+                  className={`rounded-full px-1.5 text-[11px] font-bold ${
+                    isActive ? "bg-white/20 text-white" : "bg-black/[0.06] text-text-secondary"
+                  }`}
+                >
+                  {count}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -325,6 +347,11 @@ function ApplicationCard({ app, index }: { app: Application; index: number }) {
           {formatTaka(shift.pay_amount)}
         </span>
       </div>
+
+      {/* Backend-authored contextual line (e.g. "You got this shift! …"). */}
+      {app.message ? (
+        <p className="mt-2.5 text-[12px] font-medium leading-snug text-ink/75">{app.message}</p>
+      ) : null}
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
         <span className="min-w-0 truncate text-[11px] text-text-tertiary">

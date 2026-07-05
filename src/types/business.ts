@@ -1,6 +1,6 @@
 /** Business-domain shapes (see /docs/api-guidelines.md → Business, Categories). */
 
-import type { ApplicationStatus, Pagination } from "@/types/shift";
+import type { ApplicationStatus, Pagination, Roadmap } from "@/types/shift";
 
 /** Shift type a business can post. */
 export type ShiftKind = "instant" | "scheduled" | "prebooked";
@@ -133,6 +133,8 @@ export type BusinessShiftDetail = BusinessShift & {
   is_urgent: boolean;
   /** Map pin (WGS84), or `null` when the shift has no location set. */
   coordinates: { latitude: number; longitude: number } | null;
+  /** Status journey bar (detail only). */
+  roadmap: Roadmap | null;
 };
 
 /** Worker reputation telemetry shown on an applicant row. */
@@ -162,5 +164,14 @@ export type ApplicantList = {
   pagination: Pagination;
 };
 
-/** Applicant decisions a business can take on a pending/shortlisted applicant. */
-export type ApplicantDecision = "shortlist" | "accept" | "reject";
+/**
+ * Applicant decisions a business can take on a pending/shortlisted applicant.
+ * `unshortlist` reverts a shortlisted applicant back to `pending`.
+ */
+export type ApplicantDecision = "shortlist" | "unshortlist" | "accept" | "reject";
+
+/** Bulk applicant action (`POST /business/shifts/:id/applicants/bulk`). */
+export type BulkAction = "shortlist" | "reject";
+
+/** Result of a bulk applicant action. */
+export type BulkResult = { action: BulkAction; requested: number; updated: number; skipped: number };

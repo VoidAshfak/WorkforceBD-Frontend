@@ -99,6 +99,34 @@ export type ApplicationShift = {
 /** Presence-proof method for shift check-in. `manual` is business/admin-only. */
 export type CheckInMethod = "gps" | "qr";
 
+/**
+ * Worker-facing blended state for the activity card — folds application status,
+ * shift status, and check-in state into one value (`GET /applications`).
+ */
+export type ActivityStatus =
+  | "pending"
+  | "shortlisted"
+  | "upcoming"
+  | "in_progress"
+  | "completed"
+  | "not_selected"
+  | "withdrawn"
+  | "cancelled";
+
+/** The single next action the worker can take, if any. */
+export type NextAction = "check_in" | "check_out" | null;
+
+/** One node in a shift's status journey. */
+export type RoadmapStep = { key: string; label: string; reached: boolean; current: boolean };
+
+/** Shift status journey bar (`roadmap` on applications + business shift detail). */
+export type Roadmap = {
+  current: string;
+  is_cancelled: boolean;
+  is_draft: boolean;
+  steps: RoadmapStep[];
+};
+
 /** A worker's application as it appears in the tracker (`GET /applications`). */
 export type Application = {
   id: string;
@@ -109,4 +137,19 @@ export type Application = {
   /** Attendance stamps — only present once the worker checks in/out. */
   checked_in_at?: string | null;
   checked_out_at?: string | null;
+  /** Enriched activity-card fields (see /docs/api-guidelines.md → GET /applications). */
+  activity_status?: ActivityStatus;
+  message?: string | null;
+  next_action?: NextAction;
+  roadmap?: Roadmap;
+};
+
+/** Activity-tab header counts (`GET /applications/summary`). */
+export type ActivitySummary = {
+  applications: {
+    total: number;
+    active: number;
+    by_status: Partial<Record<ApplicationStatus, number>>;
+  };
+  unread_notifications: number;
 };

@@ -1042,15 +1042,24 @@ Apply to a shift. Requires a verified worker profile. On success the owning busi
 
 ### GET `/applications`
 
-The worker's application tracker, newest first.
+The worker's application tracker (Activity tab → Applications), newest first. Each item is enriched for the activity card: a derived `activity_status`, a contextual `message`, a `next_action`, and the shift's status `roadmap`.
 
 **Query Parameters**
 
 | Param | Type | Default | Values |
 |---|---|---|---|
-| `status` | string | — | `pending` · `shortlisted` · `accepted` · `rejected` · `withdrawn` · `no_show` |
+| `status` | string | — | `pending` · `shortlisted` · `accepted` · `rejected` · `withdrawn` · `no_show` (filters on the raw application status) |
 | `page` | int | `1` | ≥ 1 |
 | `limit` | int | `10` | 1–50 |
+
+**Item fields (in addition to the raw application/shift):**
+
+| Field | Notes |
+|---|---|
+| `activity_status` | Worker-facing state blending application + shift + check-in: `pending` · `shortlisted` · `upcoming` (hired, not yet checked in) · `in_progress` (checked in) · `completed` · `not_selected` (rejected) · `withdrawn` · `cancelled` |
+| `message` | Contextual copy for the card, e.g. `"You got this shift! Get there on time for check-in."` |
+| `next_action` | `check_in` · `check_out` · `null` |
+| `roadmap` | Shift status journey — `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }` |
 
 **Response `200`**
 ```json
@@ -1061,9 +1070,18 @@ The worker's application tracker, newest first.
     "items": [
       {
         "id": "uuid",
-        "status": "pending",
+        "status": "accepted",
         "note": null,
         "applied_at": "2026-06-16T10:00:00.000Z",
+        "activity_status": "upcoming",
+        "message": "You got this shift! Get there on time for check-in.",
+        "next_action": "check_in",
+        "roadmap": {
+          "current": "worker_confirmed",
+          "is_cancelled": false,
+          "is_draft": false,
+          "steps": [{ "key": "published", "label": "Published", "reached": true, "current": false }]
+        },
         "shifts": {
           "id": "uuid",
           "title": "Waiter for Corporate Event",
@@ -1071,7 +1089,7 @@ The worker's application tracker, newest first.
           "start_time": "1970-01-01T12:00:00.000Z",
           "end_time": "1970-01-01T20:00:00.000Z",
           "pay_amount": "1500",
-          "status": "published",
+          "status": "worker_confirmed",
           "business_profiles": { "business_name": "Sky Lounge", "logo_url": null },
           "zones": { "name": "Banani" }
         }
@@ -1081,6 +1099,30 @@ The worker's application tracker, newest first.
   }
 }
 ```
+
+---
+
+### GET `/applications/summary`
+
+Activity-tab header counts. Role: `worker`.
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Activity summary fetched",
+  "data": {
+    "applications": {
+      "total": 5,
+      "active": 3,
+      "by_status": { "pending": 1, "shortlisted": 1, "accepted": 1, "rejected": 1, "withdrawn": 1 }
+    },
+    "unread_notifications": 2
+  }
+}
+```
+
+`active` = `pending` + `shortlisted` + `accepted`. `404 Worker profile not found` if none.
 
 ---
 
@@ -1472,6 +1514,7 @@ Counters on the returned shift:
 - `is_large_request` — `true` when `workers_needed` exceeds the large-request threshold (20)
 - `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **only the worker pay is escrowed today** (fee capture is deferred with the payment gateway), so `total_cost` is what the business ultimately owes, not the current hold.
 - `coordinates` — `{ latitude, longitude }` map pin, or `null` if unset (detail only, not on the list).
+- `roadmap` — status journey bar (detail only): `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }`, built from the shift's status against `shift_status_enum`.
 
 ---
 
@@ -1545,21 +1588,43 @@ Applicants for an owned shift, with worker reputation telemetry (screens 9, 15).
 
 Shortlists an applicant (`pending` → `shortlisted`). Notifies the worker.
 
+### PATCH `/business/applications/:id/unshortlist`
+
+Reverts a shortlisted applicant back to `pending` (un-shortlist toggle). No notification. `409` if the applicant is not currently `shortlisted`.
+
 ### PATCH `/business/applications/:id/accept`
 
-Hires an applicant (→ `accepted`). Enforces the shift's worker capacity. Notifies the worker.
+Hires an applicant from `pending` **or** `shortlisted` (→ `accepted`). Enforces the shift's worker capacity. Notifies the worker. (This is also "promote a shortlisted applicant to hire".)
 
 ### PATCH `/business/applications/:id/reject`
 
 Rejects an applicant (→ `rejected`). Notifies the worker.
 
-**Applicant-decision errors (all three)**
+**Applicant-decision errors (all four)**
 
 | Code | Message | Cause |
 |---|---|---|
 | `404` | `Applicant not found` | Application missing or not on a shift owned by this business |
 | `409` | `This applicant is already '<state>'` | Already `accepted`/`rejected`/`withdrawn`/etc. |
+| `409` | `Only a shortlisted applicant can be moved back to pending …` | (unshortlist only) applicant is not `shortlisted` |
 | `409` | `This shift is already fully staffed` | (accept only) hired count reached `workers_needed` |
+
+---
+
+### POST `/business/shifts/:id/applicants/bulk`
+
+Bulk-shortlist or bulk-reject applicants on an owned shift in one call. Role: `business`, **admin-verified**. Only still-decidable (`pending`/`shortlisted`) applicants that belong to this shift are touched; already-decided or foreign ids are silently skipped and counted. Notifies each affected worker. Hiring is intentionally **not** a bulk action (capacity is enforced per-slot via `accept`).
+
+**Body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `action` | enum | ✅ | `shortlist` \| `reject` |
+| `application_ids` | UUID[] | ✅ | 1–100 ids |
+
+**Response `200`** — `{ action, requested, updated, skipped }`.
+
+**Errors:** `404 Shift not found`, `422` (bad `action`/ids).
 
 > Accepting an applicant also creates their `worker_assignments` row, which is what the [live-attendance roster](#get-businessshiftsidroster) tracks.
 

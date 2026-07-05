@@ -3,6 +3,8 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type {
   ApplicantDecision,
   ApplicantList,
+  BulkAction,
+  BulkResult,
   BusinessDashboard,
   BusinessProfile,
   BusinessShift,
@@ -151,6 +153,23 @@ export const businessApi = createApi({
       ],
     }),
 
+    bulkDecideApplicants: build.mutation<
+      BulkResult,
+      { shiftId: string; action: BulkAction; application_ids: string[] }
+    >({
+      query: ({ shiftId, action, application_ids }) => ({
+        url: `/business/shifts/${shiftId}/applicants/bulk`,
+        method: "POST",
+        body: { action, application_ids },
+      }),
+      transformResponse: (res: ApiEnvelope<BulkResult>) => res.data,
+      invalidatesTags: (_r, _e, { shiftId }) => [
+        "BizApplicants",
+        "BizDashboard",
+        { type: "BizShift", id: shiftId },
+      ],
+    }),
+
     createShift: build.mutation<BusinessShift, CreateShiftInput>({
       query: (body) => ({ url: "/business/shifts", method: "POST", body }),
       transformResponse: (res: ApiEnvelope<BusinessShift>) => res.data,
@@ -182,5 +201,6 @@ export const {
   useGetBusinessShiftQuery,
   useGetShiftApplicantsQuery,
   useDecideApplicantMutation,
+  useBulkDecideApplicantsMutation,
   useCreateShiftMutation,
 } = businessApi;

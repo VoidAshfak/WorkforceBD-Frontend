@@ -18,7 +18,9 @@ import {
 } from "lucide-react";
 
 import Button from "@/components/ui/Button";
+import RoadmapBar from "@/components/shifts/RoadmapBar";
 import {
+  useBulkDecideApplicantsMutation,
   useDecideApplicantMutation,
   useGetBusinessShiftQuery,
   useGetShiftApplicantsQuery,
@@ -200,6 +202,12 @@ function Details({ shift }: { shift: Shift }) {
 
   return (
     <div className="space-y-4">
+      {shift.roadmap ? (
+        <div className="rounded-card border border-border bg-surface px-3 py-3.5">
+          <RoadmapBar roadmap={shift.roadmap} />
+        </div>
+      ) : null}
+
       {shift.is_urgent || shift.is_large_request ? (
         <div className="flex flex-wrap gap-2">
           {shift.is_urgent ? <Badge tone="bg-danger/10 text-danger" label="🚨 Urgent" /> : null}
@@ -354,6 +362,40 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
   const items = data?.items ?? [];
   const hasMore = data ? data.pagination.page < data.pagination.total_pages : false;
 
+  // Bulk shortlist/reject — only still-decidable applicants can be selected.
+  const decidableCount = items.filter(
+    (a) => a.status === "pending" || a.status === "shortlisted",
+  ).length;
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulk, { isLoading: bulking }] = useBulkDecideApplicantsMutation();
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+    setBulkError(null);
+  };
+
+  const runBulk = async (action: "shortlist" | "reject") => {
+    if (selected.size === 0) return;
+    setBulkError(null);
+    try {
+      await bulk({ shiftId, action, application_ids: [...selected] }).unwrap();
+      exitSelect();
+    } catch (err) {
+      setBulkError((err as { data?: { message?: string } })?.data?.message ?? "Bulk action failed.");
+    }
+  };
+
   if (isLoading) return <ApplicantsSkeleton />;
   if (isError) {
     return (
@@ -380,23 +422,87 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
   }
 
   return (
-    <ul className="space-y-3">
-      {items.map((a) => (
-        <ApplicantRow key={a.id} applicant={a} shiftId={shiftId} capacityFull={capacityFull} />
-      ))}
-      {hasMore ? (
-        <li>
+    <div className="space-y-3">
+      {decidableCount > 0 ? (
+        <div className="flex items-center justify-between">
+          {selecting ? (
+            <>
+              <button
+                type="button"
+                onClick={exitSelect}
+                className="text-[13px] font-semibold text-text-secondary active:scale-95"
+              >
+                Cancel
+              </button>
+              <span className="text-[12px] font-medium text-text-tertiary">{selected.size} selected</span>
+            </>
+          ) : (
+            <>
+              <span className="text-[12px] font-medium text-text-tertiary">
+                {decidableCount} awaiting decision
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelecting(true)}
+                className="rounded-full bg-black/[0.06] px-3 py-1.5 text-[13px] font-semibold text-ink active:scale-95"
+              >
+                Select
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {bulkError ? <p className="text-[12px] font-medium text-danger">{bulkError}</p> : null}
+
+      <ul className="space-y-3">
+        {items.map((a) => (
+          <ApplicantRow
+            key={a.id}
+            applicant={a}
+            shiftId={shiftId}
+            capacityFull={capacityFull}
+            selecting={selecting}
+            selected={selected.has(a.id)}
+            onToggle={() => toggle(a.id)}
+          />
+        ))}
+        {hasMore ? (
+          <li>
+            <button
+              type="button"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={isFetching}
+              className="mx-auto block rounded-full bg-black/5 px-5 py-2.5 text-[14px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+            >
+              {isFetching ? "Loading…" : "Load more"}
+            </button>
+          </li>
+        ) : null}
+      </ul>
+
+      {/* Bulk action bar */}
+      {selecting ? (
+        <div className="sticky bottom-0 flex gap-2 rounded-full border border-border bg-surface p-1.5 shadow-lg">
           <button
             type="button"
-            onClick={() => setPage((p) => p + 1)}
-            disabled={isFetching}
-            className="mx-auto block rounded-full bg-black/5 px-5 py-2.5 text-[14px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+            onClick={() => runBulk("reject")}
+            disabled={bulking || selected.size === 0}
+            className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full bg-danger/10 text-[13px] font-semibold text-danger active:scale-95 disabled:opacity-40"
           >
-            {isFetching ? "Loading…" : "Load more"}
+            <X size={15} /> Reject
           </button>
-        </li>
+          <button
+            type="button"
+            onClick={() => runBulk("shortlist")}
+            disabled={bulking || selected.size === 0}
+            className="flex h-10 flex-[1.4] items-center justify-center gap-1.5 rounded-full bg-ink text-[13px] font-semibold text-white active:scale-95 disabled:opacity-40"
+          >
+            <Star size={15} /> Shortlist{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
+        </div>
       ) : null}
-    </ul>
+    </div>
   );
 }
 
@@ -404,10 +510,16 @@ function ApplicantRow({
   applicant,
   shiftId,
   capacityFull,
+  selecting,
+  selected,
+  onToggle,
 }: {
   applicant: Applicant;
   shiftId: string;
   capacityFull: boolean;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
 }) {
   const router = useRouter();
   const w = applicant.worker_profiles;
@@ -418,6 +530,8 @@ function ApplicantRow({
   const pending = applicant.status === "pending";
   const shortlisted = applicant.status === "shortlisted";
   const actionable = pending || shortlisted;
+  // Only still-decidable applicants can be bulk-selected.
+  const selectable = selecting && actionable;
 
   const act = async (decision: ApplicantDecision) => {
     setError(null);
@@ -440,8 +554,28 @@ function ApplicantRow({
   };
 
   return (
-    <li className="rounded-card border border-border bg-surface p-3.5">
+    <li
+      onClick={selectable ? onToggle : undefined}
+      className={`rounded-card border bg-surface p-3.5 transition-colors ${
+        selectable ? "cursor-pointer active:scale-[0.99]" : ""
+      } ${
+        selecting && !actionable ? "opacity-45" : ""
+      } ${selected ? "border-ink ring-1 ring-ink" : "border-border"}`}
+    >
       <div className="flex items-start gap-3">
+        {selecting ? (
+          <span
+            className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+              !actionable
+                ? "border-black/10 bg-black/[0.03]"
+                : selected
+                  ? "border-ink bg-ink text-white"
+                  : "border-black/20"
+            }`}
+          >
+            {selected ? <Check size={13} strokeWidth={3} /> : null}
+          </span>
+        ) : null}
         <Avatar name={w.full_name} src={w.profile_picture} />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1 text-[14px] font-bold text-ink">
@@ -470,48 +604,59 @@ function ApplicantRow({
 
       {error ? <p className="mt-2 text-[12px] font-medium text-danger">{error}</p> : null}
 
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={message}
-          disabled={opening}
-          className="flex h-9 items-center gap-1.5 rounded-full border border-border px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
-        >
-          <MessageCircle size={15} /> Message
-        </button>
+      {selecting ? null : (
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={message}
+            disabled={opening}
+            className="flex h-9 items-center gap-1.5 rounded-full border border-border px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+          >
+            <MessageCircle size={15} /> Message
+          </button>
 
-        {actionable ? (
-          <>
-            <button
-              type="button"
-              onClick={() => act("reject")}
-              disabled={deciding}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-danger/10 text-danger active:scale-90 disabled:opacity-50"
-              aria-label="Reject"
-            >
-              <X size={16} />
-            </button>
-            {pending ? (
+          {actionable ? (
+            <>
               <button
                 type="button"
-                onClick={() => act("shortlist")}
+                onClick={() => act("reject")}
                 disabled={deciding}
-                className="flex h-9 items-center rounded-full bg-black/[0.06] px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-danger/10 text-danger active:scale-90 disabled:opacity-50"
+                aria-label="Reject"
               >
-                Shortlist
+                <X size={16} />
               </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => act("accept")}
-              disabled={deciding || capacityFull}
-              className="ml-auto flex h-9 items-center gap-1.5 rounded-full bg-ink px-4 text-[13px] font-semibold text-white active:scale-95 disabled:opacity-40"
-            >
-              <Check size={15} /> {capacityFull ? "Full" : "Hire"}
-            </button>
-          </>
-        ) : null}
-      </div>
+              {pending ? (
+                <button
+                  type="button"
+                  onClick={() => act("shortlist")}
+                  disabled={deciding}
+                  className="flex h-9 items-center rounded-full bg-black/[0.06] px-3 text-[13px] font-semibold text-ink active:scale-95 disabled:opacity-50"
+                >
+                  Shortlist
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => act("unshortlist")}
+                  disabled={deciding}
+                  className="flex h-9 items-center rounded-full bg-black/[0.06] px-3 text-[13px] font-semibold text-text-secondary active:scale-95 disabled:opacity-50"
+                >
+                  Unshortlist
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => act("accept")}
+                disabled={deciding || capacityFull}
+                className="ml-auto flex h-9 items-center gap-1.5 rounded-full bg-ink px-4 text-[13px] font-semibold text-white active:scale-95 disabled:opacity-40"
+              >
+                <Check size={15} /> {capacityFull ? "Full" : "Hire"}
+              </button>
+            </>
+          ) : null}
+        </div>
+      )}
     </li>
   );
 }
