@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -31,6 +32,12 @@ import { createLogger } from "@/lib/logger";
 import type { Applicant, ApplicantDecision, BusinessShiftDetail as Shift } from "@/types/business";
 
 const log = createLogger("biz-shift-detail");
+
+// MapLibre is browser-only — the location map must not server-render.
+const ShiftLocationMap = dynamic(() => import("@/components/business/ShiftLocationMap"), {
+  ssr: false,
+  loading: () => <div className="h-48 animate-pulse rounded-card bg-black/[0.05]" />,
+});
 
 type Tab = "details" | "applicants";
 
@@ -236,6 +243,14 @@ function Details({ shift }: { shift: Shift }) {
       {shift.categories ? <InfoRow icon={Star} text={shift.categories.name} /> : null}
       {shift.zones || shift.address ? (
         <InfoRow icon={MapPin} text={[shift.zones?.name, shift.address].filter(Boolean).join(" · ")} />
+      ) : null}
+
+      {shift.coordinates ? (
+        <ShiftLocationMap
+          key={`${shift.coordinates.latitude},${shift.coordinates.longitude}`}
+          lat={shift.coordinates.latitude}
+          lng={shift.coordinates.longitude}
+        />
       ) : null}
 
       {shift.description ? (

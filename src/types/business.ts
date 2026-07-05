@@ -131,6 +131,8 @@ export type BusinessShiftDetail = BusinessShift & {
   manager_contact: string | null;
   /** Emergency staffing flag. */
   is_urgent: boolean;
+  /** Map pin (WGS84), or `null` when the shift has no location set. */
+  coordinates: { latitude: number; longitude: number } | null;
 };
 
 /** Worker reputation telemetry shown on an applicant row. */
