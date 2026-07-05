@@ -1431,6 +1431,8 @@ Creates a shift (create-shift wizard, screens 9–11). Submits it for admin revi
 | `zone_id` | UUID | — | defaults to the business profile's zone |
 | `address` | string | — | defaults to the business profile address |
 | `landmark` | string | — | defaults to the business profile landmark |
+| `latitude` | number | — | map pin, −90..90; **must be sent with `longitude`**. Omitted → falls back to the business location |
+| `longitude` | number | — | map pin, −180..180; must be sent with `latitude` |
 | `draft` | bool | — | `true` saves as `draft` instead of submitting for review |
 | `allow_duplicate` | bool | — | `true` bypasses the near-duplicate guard (see `409` below) |
 
@@ -1469,12 +1471,13 @@ Counters on the returned shift:
 - `is_editable` — `true` only while the shift is `draft`/`published`/`applications_open` **and** nobody is hired yet. Use it to show/hide the edit button; the journey bar is driven by `status`.
 - `is_large_request` — `true` when `workers_needed` exceeds the large-request threshold (20)
 - `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **only the worker pay is escrowed today** (fee capture is deferred with the payment gateway), so `total_cost` is what the business ultimately owes, not the current hold.
+- `coordinates` — `{ latitude, longitude }` map pin, or `null` if unset (detail only, not on the list).
 
 ---
 
 ### PATCH `/business/shifts/:id`
 
-Edits an owned shift. Allowed only while `draft`/`published`/`applications_open` **and before any worker is hired** (mirrors `is_editable`). Body accepts the same (optional) fields as create except `draft` and `allow_duplicate`. Editing `pay_amount`/`workers_needed` recomputes `platform_fee` (the escrow hold is unchanged).
+Edits an owned shift. Allowed only while `draft`/`published`/`applications_open` **and before any worker is hired** (mirrors `is_editable`). Body accepts the same (optional) fields as create except `draft` and `allow_duplicate`. Editing `pay_amount`/`workers_needed` recomputes `platform_fee` (the escrow hold is unchanged). Sending `latitude`+`longitude` moves the map pin.
 
 **Errors:** `409 A '<state>' shift can no longer be edited`, `409 This shift can no longer be edited — a worker has already been hired`, `400` (invalid refs/date), `404`, `422` (incl. `end_time must be after start_time`).
 

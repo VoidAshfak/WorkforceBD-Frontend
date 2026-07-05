@@ -48,6 +48,10 @@ export const createShiftSchema = z
     dress_code: z.string().trim().max(500).optional(),
     // Defaults to the business profile's manager phone when absent.
     manager_contact: z.string().trim().max(20).optional(),
+    // Map pin (WGS84). Must be sent together; absent → backend falls back to the
+    // business profile's location.
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
     // Emergency staffing flag.
     is_urgent: z.boolean().default(false),
     /** `true` bypasses the backend near-duplicate guard (409). */
@@ -64,6 +68,11 @@ export const createShiftSchema = z
   .refine((v) => !HHMM.test(v.start_time) || !HHMM.test(v.end_time) || v.end_time > v.start_time, {
     message: "End time must be after start time",
     path: ["end_time"],
+  })
+  // Coordinates are a pair — the backend rejects one without the other.
+  .refine((v) => (v.latitude === undefined) === (v.longitude === undefined), {
+    message: "Pick a point on the map",
+    path: ["latitude"],
   });
 
 /* ----------------------------- Onboarding ------------------------------- */

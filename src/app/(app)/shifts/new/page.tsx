@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch, Controller, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -22,6 +23,12 @@ import { formatTaka } from "@/lib/format";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("shift:create");
+
+// MapLibre is browser-only — the location picker must not server-render.
+const ShiftLocationPicker = dynamic(() => import("@/components/business/ShiftLocationPicker"), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded-card bg-black/[0.05]" />,
+});
 
 const SHIFT_TYPES = [
   { value: "instant", label: "Instant", hint: "Needed now" },
@@ -50,6 +57,7 @@ const LARGE_REQUEST_THRESHOLD = 20;
 const STEPS = [
   { title: "Basics", fields: ["title", "category_id", "shift_type"] },
   { title: "Schedule", fields: ["shift_date", "start_time", "end_time"] },
+  { title: "Location", fields: ["latitude", "longitude"] },
   { title: "Pay & headcount", fields: ["pay_amount", "workers_needed"] },
   { title: "Preferences", fields: ["role_type", "languages"] },
   { title: "Instructions", fields: ["reporting_details", "dress_code", "manager_contact", "description"] },
@@ -113,6 +121,7 @@ function CreateShiftForm() {
     handleSubmit,
     control,
     trigger,
+    setValue,
     formState: { errors },
   } = useForm<CreateShiftFormInput, unknown, CreateShiftInput>({
     resolver: zodResolver(createShiftSchema),
@@ -322,6 +331,22 @@ function CreateShiftForm() {
         ) : null}
 
         {step === 2 ? (
+          <Field label="Shift location" optional error={errors.latitude?.message}>
+            <ShiftLocationPicker
+              value={
+                values.latitude != null && values.longitude != null
+                  ? { lat: values.latitude, lng: values.longitude }
+                  : null
+              }
+              onChange={(v) => {
+                setValue("latitude", v?.lat, { shouldValidate: true });
+                setValue("longitude", v?.lng, { shouldValidate: true });
+              }}
+            />
+          </Field>
+        ) : null}
+
+        {step === 3 ? (
           <>
         {/* Pay + headcount */}
         <div className="grid grid-cols-2 gap-3">
@@ -371,7 +396,7 @@ function CreateShiftForm() {
           </>
         ) : null}
 
-        {step === 3 ? (
+        {step === 4 ? (
           <>
         {/* Role type (optional) */}
         <Field label="Role" optional error={errors.role_type?.message}>
@@ -443,7 +468,7 @@ function CreateShiftForm() {
           </>
         ) : null}
 
-        {step === 4 ? (
+        {step === 5 ? (
           <>
         {/* On-site instructions */}
         <Field label="Reporting details" optional error={errors.reporting_details?.message}>
@@ -484,7 +509,7 @@ function CreateShiftForm() {
           </>
         ) : null}
 
-        {step === 5 ? (
+        {step === 6 ? (
           <div className="space-y-4">
             <div className="rounded-card border border-border bg-surface p-4">
               <p className="text-[15px] font-bold text-ink">{values.title || "Untitled shift"}</p>
@@ -500,6 +525,14 @@ function CreateShiftForm() {
                 />
                 <ReviewLine label="Workers" value={String(workers)} />
                 <ReviewLine label="Pay / worker" value={formatTaka(pay)} />
+                <ReviewLine
+                  label="Location"
+                  value={
+                    values.latitude != null && values.longitude != null
+                      ? `📍 ${values.latitude.toFixed(4)}, ${values.longitude.toFixed(4)}`
+                      : "Business address"
+                  }
+                />
                 {values.is_urgent ? <ReviewLine label="Priority" value="🚨 Urgent" /> : null}
               </div>
             </div>
