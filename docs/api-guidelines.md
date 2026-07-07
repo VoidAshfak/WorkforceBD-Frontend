@@ -792,7 +792,7 @@ Worker-facing shift discovery feed and detail. All endpoints require:
 - `Authorization: Bearer <access_token>`
 - Active context must be `worker` (see [Account context](#account-context-active-role))
 
-Only shifts with status `published` or `applications_open` (and `shift_date` today or later) appear in discovery. Each shift carries computed slot counters:
+Only shifts with status `published` or `applications_open` (and `shift_date` today or later) appear in discovery. A worker's **own business's** shifts are excluded from the feed, the dashboard counters, and cannot be applied to (a single user may hold both a worker and a business profile — same identity — but can't work their own posts; see the self-dealing `403` on [POST `/applications`](#post-applications)). Each shift carries computed slot counters:
 
 | Field | Meaning |
 |---|---|
@@ -921,6 +921,8 @@ Single shift detail. Includes richer business info (reliability + verification).
 |---|---|---|
 | `id` | UUID | Shift ID |
 
+**Errors:** `404 Shift not found` (unknown/deleted), `403 You can't view a shift posted by your own business account` (self-dealing — one identity may hold both profiles).
+
 **Response `200`**
 ```json
 {
@@ -1031,6 +1033,7 @@ Apply to a shift. Requires a verified worker profile. On success the owning busi
 |---|---|---|
 | `403` | `Your worker profile must be verified by an admin first` | Profile not verified |
 | `403` | `Complete your worker profile to continue` | No worker profile yet |
+| `403` | `You can't apply to a shift posted by your own business account` | Self-dealing — the shift's owning user is you (one identity may hold both profiles) |
 | `404` | `Shift not found` | Unknown/deleted shift |
 | `409` | `This shift is not accepting applications` | Shift not in an applyable state |
 | `409` | `This shift has already passed` | `shift_date` in the past |
@@ -1682,6 +1685,7 @@ Rejects an applicant (→ `rejected`). Notifies the worker.
 | Code | Message | Cause |
 |---|---|---|
 | `404` | `Applicant not found` | Application missing or not on a shift owned by this business |
+| `403` | `You can't hire or screen your own worker profile` | Self-dealing — the applicant is your own worker profile |
 | `409` | `This applicant is already '<state>'` | Already `accepted`/`rejected`/`withdrawn`/etc. |
 | `409` | `Only a shortlisted applicant can be moved back to pending …` | (unshortlist only) applicant is not `shortlisted` |
 | `409` | `This shift is already fully staffed` | (accept only) hired count reached `workers_needed` |
@@ -1690,7 +1694,7 @@ Rejects an applicant (→ `rejected`). Notifies the worker.
 
 ### POST `/business/shifts/:id/applicants/bulk`
 
-Bulk-shortlist or bulk-reject applicants on an owned shift in one call. Role: `business`, **admin-verified**. Only still-decidable (`pending`/`shortlisted`) applicants that belong to this shift are touched; already-decided or foreign ids are silently skipped and counted. Notifies each affected worker. Hiring is intentionally **not** a bulk action (capacity is enforced per-slot via `accept`).
+Bulk-shortlist or bulk-reject applicants on an owned shift in one call. Role: `business`, **admin-verified**. Only still-decidable (`pending`/`shortlisted`) applicants that belong to this shift are touched; already-decided or foreign ids — and the caller's **own** worker profile (self-dealing) — are silently skipped and counted. Notifies each affected worker. Hiring is intentionally **not** a bulk action (capacity is enforced per-slot via `accept`).
 
 **Body**
 

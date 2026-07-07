@@ -376,6 +376,7 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulk, { isLoading: bulking }] = useBulkDecideApplicantsMutation();
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -395,8 +396,16 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
     if (selected.size === 0) return;
     setBulkError(null);
     try {
-      await bulk({ shiftId, action, application_ids: [...selected] }).unwrap();
+      const res = await bulk({ shiftId, action, application_ids: [...selected] }).unwrap();
       exitSelect();
+      // Some ids can be silently skipped by the backend (already decided, or the
+      // caller's own worker profile — self-dealing). Report what actually applied.
+      const verb = action === "shortlist" ? "shortlisted" : "rejected";
+      setBulkNote(
+        res.skipped > 0
+          ? `${res.updated} ${verb} · ${res.skipped} skipped (already decided or your own profile)`
+          : `${res.updated} ${verb}`,
+      );
     } catch (err) {
       setBulkError((err as { data?: { message?: string } })?.data?.message ?? "Bulk action failed.");
     }
@@ -449,7 +458,10 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
               </span>
               <button
                 type="button"
-                onClick={() => setSelecting(true)}
+                onClick={() => {
+                  setBulkNote(null);
+                  setSelecting(true);
+                }}
                 className="rounded-full bg-black/[0.06] px-3 py-1.5 text-[13px] font-semibold text-ink active:scale-95"
               >
                 Select
@@ -460,6 +472,9 @@ function ApplicantsTab({ shiftId, capacityFull }: { shiftId: string; capacityFul
       ) : null}
 
       {bulkError ? <p className="text-[12px] font-medium text-danger">{bulkError}</p> : null}
+      {bulkNote ? (
+        <p className="rounded-lg bg-emerald/10 px-3 py-2 text-[12px] font-medium text-emerald">{bulkNote}</p>
+      ) : null}
 
       <ul className="space-y-3">
         {items.map((a) => (

@@ -39,7 +39,12 @@ export default function ShiftDetailPage() {
 
 function WorkerShiftDetailPage({ id }: { id: string }) {
   const router = useRouter();
-  const { data: shift, isLoading, isError } = useGetShiftQuery(id);
+  const { data: shift, isLoading, isError, error } = useGetShiftQuery(id);
+
+  // Self-dealing guard: one identity can hold both a worker and a business
+  // profile, but a worker can't view/apply to their own business's posts — the
+  // backend returns 403 here (own posts are also excluded from discovery).
+  const selfPosted = (error as { status?: number })?.status === 403;
 
   // The applied view is built to fit the frame exactly (drawers hold the depth),
   // so it gets a non-scrolling full-height column; everything else scrolls.
@@ -52,6 +57,17 @@ function WorkerShiftDetailPage({ id }: { id: string }) {
       >
         {isLoading ? (
           <DetailSkeleton />
+        ) : selfPosted ? (
+          <div className="flex flex-col items-center gap-3 py-20 text-center">
+            <p className="text-[15px] font-semibold text-ink">This is your own shift</p>
+            <p className="max-w-xs text-[14px] text-text-secondary">
+              You posted this from your business account, so you can&apos;t apply to it. Switch to
+              your business account to manage its applicants.
+            </p>
+            <Button variant="secondary" onClick={() => router.push("/explore")} className="mt-2">
+              Back to explore
+            </Button>
+          </div>
         ) : isError || !shift ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
             <p className="text-[15px] font-semibold text-ink">Shift not found</p>
