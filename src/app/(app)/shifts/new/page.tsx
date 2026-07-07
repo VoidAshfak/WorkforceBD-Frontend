@@ -247,7 +247,7 @@ function CreateShiftForm() {
 
       <form className="flex-1 px-5 pb-28 pt-4">
         {step === 0 ? (
-          <>
+          <div className="space-y-5">
         {/* Title */}
         <Field label="Shift title" error={errors.title?.message}>
           <input
@@ -299,7 +299,7 @@ function CreateShiftForm() {
         </Field>
 
         {/* Urgent / emergency staffing */}
-        <div className="mt-5">
+        <div>
           <Controller
             control={control}
             name="is_urgent"
@@ -308,11 +308,11 @@ function CreateShiftForm() {
             )}
           />
         </div>
-          </>
+          </div>
         ) : null}
 
         {step === 1 ? (
-          <>
+          <div className="space-y-5">
         {/* Date */}
         <Field label="Date" error={errors.shift_date?.message}>
           <input type="date" min={today} {...register("shift_date")} className={inputCls} />
@@ -327,7 +327,7 @@ function CreateShiftForm() {
             <input type="time" {...register("end_time")} className={inputCls} />
           </Field>
         </div>
-          </>
+          </div>
         ) : null}
 
         {step === 2 ? (
@@ -347,7 +347,7 @@ function CreateShiftForm() {
         ) : null}
 
         {step === 3 ? (
-          <>
+          <div>
         {/* Pay + headcount */}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Pay / worker (৳)" error={errors.pay_amount?.message}>
@@ -393,11 +393,11 @@ function CreateShiftForm() {
             ) : null}
           </div>
         ) : null}
-          </>
+          </div>
         ) : null}
 
         {step === 4 ? (
-          <>
+          <div className="space-y-5">
         {/* Role type (optional) */}
         <Field label="Role" optional error={errors.role_type?.message}>
           <input {...register("role_type")} placeholder="e.g. Waiter" maxLength={100} className={inputCls} />
@@ -465,11 +465,11 @@ function CreateShiftForm() {
           />
         </Field>
 
-          </>
+          </div>
         ) : null}
 
         {step === 5 ? (
-          <>
+          <div className="space-y-5">
         {/* On-site instructions */}
         <Field label="Reporting details" optional error={errors.reporting_details?.message}>
           <textarea
@@ -506,7 +506,7 @@ function CreateShiftForm() {
             className={`${inputCls} h-auto resize-none py-3`}
           />
         </Field>
-          </>
+          </div>
         ) : null}
 
         {step === 6 ? (
@@ -681,7 +681,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mt-5 first:mt-2">
+    <div>
       <label className="mb-1.5 block text-[14px] font-semibold text-ink">
         {label}
         {optional ? <span className="ml-1 font-normal text-text-tertiary">· optional</span> : null}

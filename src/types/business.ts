@@ -175,3 +175,60 @@ export type BulkAction = "shortlist" | "reject";
 
 /** Result of a bulk applicant action. */
 export type BulkResult = { action: BulkAction; requested: number; updated: number; skipped: number };
+
+/** Weighted factors that build a cancellation rate (base + capped adjustments). */
+export type PenaltyFactors = Record<string, number>;
+
+/** One hired worker's cancellation compensation on the delete preview. */
+export type PenaltyWorker = {
+  worker_profile_id: string;
+  full_name: string | null;
+  /** Per-worker rate ∈ [0.10, 0.75] applied to `pay_amount`. */
+  rate: number;
+  /** Compensation paid to this worker (decimal string). */
+  amount: string;
+  factors: PenaltyFactors;
+};
+
+/** Penalty block of a cancellation preview (`null` on a free delete). */
+export type CancellationPenalty = {
+  total_penalty: string;
+  shift_factors: PenaltyFactors;
+  workers: PenaltyWorker[];
+};
+
+/** Why a delete is free (`penalty` when money moves). */
+export type CancellationReason =
+  | "penalty"
+  | "no_workers_hired"
+  | "shift_expired"
+  | "outside_notice_window";
+
+/**
+ * Dry-run breakdown for the swipe-to-delete modal
+ * (`GET /business/shifts/:id/cancellation-preview`). Moves no money. Amounts are
+ * decimal strings. When `free`, `penalty` is `null` and `refund_to_business`
+ * equals `escrow_amount`.
+ */
+export type CancellationPreview = {
+  shift_id: string;
+  title: string;
+  status: string;
+  free: boolean;
+  penalty_applies: boolean;
+  reason: CancellationReason;
+  is_expired: boolean;
+  hours_to_start: number;
+  hired_count: number;
+  escrow_amount: string;
+  refund_to_business: string;
+  penalty: CancellationPenalty | null;
+};
+
+/** Body for `DELETE /business/shifts/:id`. */
+export type DeleteShiftInput = {
+  id: string;
+  reason?: string;
+  /** Required `true` to execute a penalty delete (backend 409s otherwise). */
+  acknowledge_penalty?: boolean;
+};

@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Activity,
   BadgeCheck,
   CalendarDays,
   CheckCircle2,
@@ -20,7 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import BusinessActivity from "@/components/business/BusinessActivity";
 import CheckInSheet from "@/components/shifts/CheckInSheet";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
@@ -106,22 +105,13 @@ const TABS: { value: ApplicationStatus | undefined; label: string }[] = [
 const WITHDRAWABLE: ApplicationStatus[] = ["pending", "shortlisted"];
 
 /**
- * Activity — the worker's application tracker. Lists shifts they've applied to
- * with live status, newest first, filterable by status and paginated. Business
- * accounts get a placeholder until the business activity view is built.
+ * Activity — role-aware tracker. Workers see their application tracker; business
+ * accounts see the shifts they've posted (see {@link BusinessActivity}).
  */
 export default function ActivityPage() {
   const { activeRole } = useAppSelector((s) => s.auth);
 
-  if (activeRole === "business") {
-    return (
-      <ScreenPlaceholder
-        icon={Activity}
-        title="Activity"
-        subtitle="Your posted shifts and applicant activity will show up here soon."
-      />
-    );
-  }
+  if (activeRole === "business") return <BusinessActivity />;
 
   return <WorkerActivity />;
 }

@@ -11,7 +11,9 @@ import type {
   BusinessShiftDetail,
   BusinessShiftList,
   BusinessWallet,
+  CancellationPreview,
   Category,
+  DeleteShiftInput,
 } from "@/types/business";
 import type {
   BusinessDocumentsInput,
@@ -176,6 +178,22 @@ export const businessApi = createApi({
       // A new shift changes the home counters, the list, and (escrow) the wallet.
       invalidatesTags: ["BizShift", "BizDashboard", "BizWallet"],
     }),
+
+    // Dry-run cancel breakdown for the swipe-to-delete modal. Always refetched
+    // (staffing/timing shift the penalty) and never cached — read fresh per open.
+    getCancellationPreview: build.query<CancellationPreview, string>({
+      query: (id) => ({ url: `/business/shifts/${id}/cancellation-preview`, method: "GET" }),
+      transformResponse: (res: ApiEnvelope<CancellationPreview>) => res.data,
+      keepUnusedDataFor: 0,
+    }),
+
+    deleteShift: build.mutation<{ message: string }, DeleteShiftInput>({
+      query: ({ id, ...body }) => ({ url: `/business/shifts/${id}`, method: "DELETE", body }),
+      transformResponse: (res: ApiEnvelope<unknown>) => ({ message: res.message }),
+      // Removing a shift drops it from the list, refunds/settles escrow (wallet),
+      // and moves the home counters.
+      invalidatesTags: ["BizShift", "BizDashboard", "BizWallet"],
+    }),
   }),
 });
 
@@ -203,4 +221,6 @@ export const {
   useDecideApplicantMutation,
   useBulkDecideApplicantsMutation,
   useCreateShiftMutation,
+  useGetCancellationPreviewQuery,
+  useDeleteShiftMutation,
 } = businessApi;

@@ -55,7 +55,13 @@ export default function BusinessShiftDetail({ id }: { id: string }) {
   const params = useSearchParams();
   const [tab, setTab] = useState<Tab>(params.get("tab") === "applicants" ? "applicants" : "details");
 
-  const { data: shift, isLoading, isError } = useGetBusinessShiftQuery(id);
+  // Shift `status` auto-advances server-side as the shift progresses (hire →
+  // check-in → complete). Refetch on remount and window refocus so the journey
+  // bar (`roadmap`) reflects the live status without a manual reload.
+  const { data: shift, isLoading, isError } = useGetBusinessShiftQuery(id, {
+    refetchOnMountOrArgChange: true,
+    refetchOnFocus: true,
+  });
   const unread = useGetChatUnreadCountQuery({ shift_id: id });
 
   if (isLoading) return <Skeleton onBack={() => router.back()} />;

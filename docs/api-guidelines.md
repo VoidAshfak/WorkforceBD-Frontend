@@ -1246,7 +1246,7 @@ Base path: `/api/v1/business`. Onboarding and read endpoints do **not** require 
 
 > **Verification gate:** Onboarding (`POST/PATCH /business/profile*`) and all reads (`GET` profile, wallet, dashboard, shifts, applicants, roster) are open to an `unverified` business so it can complete its profile and submit documents. The following **require `verification_status = verified`** and otherwise return `403`:
 > - `POST /business/wallet/topup`
-> - `POST /business/shifts`, `PATCH /business/shifts/:id`, `PATCH /business/shifts/:id/publish`, `PATCH /business/shifts/:id/cancel`
+> - `POST /business/shifts`, `PATCH /business/shifts/:id`, `PATCH /business/shifts/:id/publish`, `PATCH /business/shifts/:id/cancel`, `GET /business/shifts/:id/cancellation-preview`, `DELETE /business/shifts/:id`
 > - `PATCH /business/applications/:id/{shortlist,accept,reject}`
 > - `POST /payments/shifts/:shiftId/settle` (see [Payments](#payments))
 >
@@ -1514,7 +1514,25 @@ Counters on the returned shift:
 - `is_large_request` — `true` when `workers_needed` exceeds the large-request threshold (20)
 - `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **only the worker pay is escrowed today** (fee capture is deferred with the payment gateway), so `total_cost` is what the business ultimately owes, not the current hold.
 - `coordinates` — `{ latitude, longitude }` map pin, or `null` if unset (detail only, not on the list).
-- `roadmap` — status journey bar (detail only): `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }`, built from the shift's status against `shift_status_enum`.
+- `roadmap` — status journey bar (detail only): `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }`, built from the shift's status against `shift_status_enum`. Auto-advances as the shift progresses — see below.
+
+#### Shift status lifecycle
+
+`status` auto-advances (forward-only — never rewinds) as lifecycle events complete, so the detail page and the journey bar always reflect reality without a manual refresh of state:
+
+| Event | `status` becomes |
+|---|---|
+| Business publishes | `pending_approval` |
+| Admin approves | `published` |
+| First applicant hired | `worker_selected` |
+| Last open slot hired (fully staffed) | `worker_confirmed` |
+| First worker checks in | `checked_in` |
+| All hired workers checked in | `active` |
+| Last checked-in worker checks out **after** the shift window ends | `completed` |
+| Business settles payment | `paid` → `closed` |
+| Business cancels | `cancelled` (off-path) |
+
+A transition only fires when it moves the shift **forward**, so skipped/duplicate/concurrent events are safe. `POST /payments/shifts/:id/complete` is a manual fallback for the `completed` step (e.g. no one checked out); settlement (`paid`→`closed`) is the terminal event.
 
 ---
 
@@ -1536,9 +1554,68 @@ Submits a draft shift for admin review (`draft` → `pending_approval`). It beco
 
 ---
 
+### Deleting / cancelling a shift (with worker compensation)
+
+Removing a posted shift is a **delete** (`DELETE /business/shifts/:id`); the frontend "swipe left" gesture first calls the **preview** to show a charge modal. Whether money moves depends on the shift state:
+
+**Free** (full escrow refunded, shift soft-deleted) when any of:
+- nobody is hired yet, **or**
+- the shift has **expired** (its time window passed and nobody checked in), **or**
+- it is a `scheduled`/`prebooked` shift cancelled **more than `CANCEL_FREE_NOTICE_HOURS` (24h)** before start.
+
+**Penalty** (each hired worker is paid `pay_amount × rate` compensation from escrow, the remainder returns to the business) when a shift with hired workers is cancelled **inside** the 24h notice window, or an `instant` shift is cancelled at any time before it expires.
+
+The per-worker **rate** ∈ `[0.10, 0.75]` is a timing base (how close to start; instant floors higher) plus four capped adjustments — hiring duration, worker reliability, business reliability, and demand (applicants ÷ slots). Every weight/bound is a constant in `src/constants.js`; the breakdown (`factors`) is returned so the modal can explain the charge. Compensation is credited to each worker's wallet with a ledger entry and a real-time notification, mirroring settlement.
+
+#### GET `/business/shifts/:id/cancellation-preview`
+
+Dry-run breakdown for the swipe-to-delete modal. Moves no money. Role: `business`, **verified**.
+
+**Response `200`** (`data`):
+```json
+{
+  "shift_id": "uuid",
+  "title": "Evening waiter",
+  "status": "worker_confirmed",
+  "free": false,
+  "penalty_applies": true,
+  "reason": "penalty",
+  "is_expired": false,
+  "hours_to_start": 8.0,
+  "hired_count": 2,
+  "escrow_amount": "2400.00",
+  "refund_to_business": "1000.00",
+  "penalty": {
+    "total_penalty": "1400.00",
+    "shift_factors": { "base": 0.4333, "business_reliability": 0.04, "demand": 0.0333 },
+    "workers": [
+      {
+        "worker_profile_id": "uuid",
+        "full_name": "R12 A",
+        "rate": 0.6367,
+        "amount": "700.00",
+        "factors": { "base": 0.4333, "duration": 0.05, "worker_reliability": 0.08, "business_reliability": 0.04, "demand": 0.0333 }
+      }
+    ]
+  }
+}
+```
+For a free delete, `penalty` is `null`, `free` is `true`, `reason` is one of `no_workers_hired` / `shift_expired` / `outside_notice_window`, and `refund_to_business` equals `escrow_amount`.
+
+**Errors:** `409 A '<state>' shift cannot be cancelled` (from `completed`/`payment_pending`/`paid`/`closed`/`cancelled`), `404`, `422`.
+
+#### DELETE `/business/shifts/:id`
+
+Executes the delete/cancel. Role: `business`, **verified**. **Body:** `reason` (optional, max 500), `acknowledge_penalty` (boolean).
+
+- Free case → refunds escrow, soft-deletes the shift, notifies any workers. Response `200` `"Shift deleted"`.
+- Penalty case → **requires `acknowledge_penalty: true`**. Without it, returns **`409` `Cancellation penalty must be acknowledged before deleting this shift`** with the full breakdown in `errors` (the same shape as the preview `data`) so the modal can confirm. With it, pays the workers, returns the remainder, soft-deletes, and responds `200` `"Shift cancelled and workers compensated"` with the applied breakdown.
+
+**Errors:** `409` (penalty not acknowledged — carries the breakdown), `409 A '<state>' shift cannot be cancelled`, `404`, `422`.
+
 ### PATCH `/business/shifts/:id/cancel`
 
-Cancels an owned shift. **Body:** `reason` (required, max 500). Any **held escrow is refunded** to the business wallet in the same transaction.
+Legacy cancel path. **Body:** `reason` (required, max 500). Delegates to the delete flow with the penalty **pre-acknowledged** — so a hired shift now **compensates workers** (same engine as above) instead of refunding the business in full. Returns the breakdown `data`. Prefer `DELETE /business/shifts/:id` for new clients (it surfaces the charge for confirmation first).
 
 **Errors:** `409 A '<state>' shift cannot be cancelled` (from `completed`/`payment_pending`/`paid`/`closed`/`cancelled`), `404`, `422`.
 
@@ -1996,10 +2073,10 @@ Money module — worker wallet + ledger, payout (withdrawal) requests, business 
 ### Money flow
 
 ```
-business: POST /payments/shifts/:id/complete   (published/applications_open → completed)
+business: POST /payments/shifts/:id/complete   (mid-run → completed; auto-fires on last checkout)
         │
         ▼
-business: POST /payments/shifts/:id/settle      (completed → paid)
+business: POST /payments/shifts/:id/settle      (completed → paid → closed)
         │   each hired worker who checked in credited flat pay_amount → wallet
         │   accepted-but-absent workers marked no_show (unpaid)
         │   ledger 'credit' rows written; paid workers notified "Payment received!"
@@ -2099,17 +2176,17 @@ Worker's own payout requests, newest first. Role: `worker`.
 
 ### POST `/payments/shifts/:shiftId/complete`
 
-Marks a live owned shift `completed`, which unlocks payment. Role: `business`.
+Marks a live owned shift `completed`, which unlocks payment. Role: `business`. Accepted source states: `published`, `applications_open`, `worker_selected`, `worker_confirmed`, `checked_in`, `active`. Usually unnecessary — a shift **auto-completes** when its last checked-in worker checks out after the shift window ends (see [Shift status lifecycle](#shift-status-lifecycle)); call this to finalize early or when no one checked out.
 
 **Response `200`** — `"Shift marked completed"` with `{ id, status: "completed" }`.
 
-**Errors:** `404 Shift not found`, `409 A '<state>' shift cannot be completed` (not `published`/`applications_open`), `422`.
+**Errors:** `404 Shift not found`, `409 A '<state>' shift cannot be completed` (already `completed`/`paid`/`closed`, or still `draft`/`pending_approval`), `422`.
 
 ---
 
 ### POST `/payments/shifts/:shiftId/settle`
 
-Settles a completed owned shift: pays the flat `pay_amount` to every hired worker **who actually checked in**, writes ledger credits, flips the shift to `paid`, and notifies the paid workers. Role: `business`, **admin-verified**. One-shot.
+Settles a completed owned shift: pays the flat `pay_amount` to every hired worker **who actually checked in**, writes ledger credits, flips the shift to `paid` then `closed` (settlement is the final lifecycle event), and notifies the paid workers. Role: `business`, **admin-verified**. One-shot.
 
 > **Attendance-gated.** Only `accepted` workers with a `checked_in_at` stamp are paid. Accepted workers who never checked in are marked `no_show` (no payment) in the same transaction — settlement is the moment attendance is reconciled.
 
@@ -2135,7 +2212,7 @@ Settles a completed owned shift: pays the flat `pay_amount` to every hired worke
 | Code | Message | Cause |
 |---|---|---|
 | `404` | `Shift not found` | Missing or not owned |
-| `409` | `This shift is already settled` | Already `paid` |
+| `409` | `This shift is already settled` | Already `paid` or `closed` |
 | `409` | `Complete the shift before settling payment` | Shift not `completed` |
 | `400` | `No hired workers to pay for this shift` | No `accepted` applicants |
 | `403` | `Your business profile must be verified by an admin first` | Not verified |
