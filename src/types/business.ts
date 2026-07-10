@@ -48,6 +48,29 @@ export type BusinessProfile = {
   zones: { id: string; name: string } | null;
 };
 
+/**
+ * One row of the business wallet ledger (`GET /business/wallet/transactions`).
+ * Mirrors the worker ledger but adds `held_after` (escrowed balance after the
+ * move). `type`: `credit` = funds in/returned, `debit` = funds held or spent.
+ * `shift_id` is `null` for top-ups. Amounts are decimal strings.
+ */
+export type BusinessWalletTxn = {
+  id: string;
+  type: "credit" | "debit";
+  amount: string;
+  balance_after: string;
+  held_after: string;
+  description: string;
+  shift_id: string | null;
+  reference_id: string | null;
+  created_at: string;
+};
+
+export type BusinessWalletTxnList = {
+  items: BusinessWalletTxn[];
+  pagination: Pagination;
+};
+
 /** A shared shift category (`GET /categories`). */
 export type Category = {
   id: string;

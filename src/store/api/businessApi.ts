@@ -11,6 +11,7 @@ import type {
   BusinessShiftDetail,
   BusinessShiftList,
   BusinessWallet,
+  BusinessWalletTxnList,
   CancellationPreview,
   Category,
   DeleteShiftInput,
@@ -21,6 +22,7 @@ import type {
   BusinessPreferencesInput,
   BusinessProfileInput,
   CreateShiftInput,
+  TopupInput,
 } from "@/lib/validation/business";
 
 type ApiEnvelope<T> = { success: boolean; message: string; data: T };
@@ -48,7 +50,14 @@ export type ApplicantsQuery = {
 export const businessApi = createApi({
   reducerPath: "businessApi",
   baseQuery: fetchBaseQuery({ baseUrl: "/api", credentials: "same-origin" }),
-  tagTypes: ["BizDashboard", "BizWallet", "BizShift", "BizProfile", "BizApplicants"],
+  tagTypes: [
+    "BizDashboard",
+    "BizWallet",
+    "BizWalletTxn",
+    "BizShift",
+    "BizProfile",
+    "BizApplicants",
+  ],
   endpoints: (build) => ({
     getBusinessProfile: build.query<BusinessProfile, void>({
       query: () => ({ url: "/business/profile", method: "GET" }),
@@ -90,6 +99,34 @@ export const businessApi = createApi({
       query: () => ({ url: "/business/wallet", method: "GET" }),
       transformResponse: (res: ApiEnvelope<BusinessWallet>) => res.data,
       providesTags: ["BizWallet"],
+    }),
+
+    getBusinessWalletTransactions: build.query<
+      BusinessWalletTxnList,
+      { page?: number; limit?: number }
+    >({
+      query: (args) => ({
+        url: "/business/wallet/transactions",
+        method: "GET",
+        params: cleanParams(args),
+      }),
+      transformResponse: (res: ApiEnvelope<BusinessWalletTxnList>) => res.data,
+      // Single growing list for "load more" — page excluded from the cache key.
+      serializeQueryArgs: () => "ledger",
+      merge: (current, incoming, { arg }) => {
+        if ((arg.page ?? 1) <= 1) return incoming;
+        current.items.push(...incoming.items);
+        current.pagination = incoming.pagination;
+      },
+      forceRefetch: ({ currentArg, previousArg }) => currentArg?.page !== previousArg?.page,
+      providesTags: ["BizWalletTxn"],
+    }),
+
+    topupWallet: build.mutation<BusinessWallet, TopupInput>({
+      query: (body) => ({ url: "/business/wallet/topup", method: "POST", body }),
+      transformResponse: (res: ApiEnvelope<BusinessWallet>) => res.data,
+      // New funds change the balance and add a ledger row.
+      invalidatesTags: ["BizWallet", "BizWalletTxn"],
     }),
 
     getCategories: build.query<Category[], void>({
@@ -214,6 +251,8 @@ export const {
   useSaveBusinessPreferencesMutation,
   useGetBusinessDashboardQuery,
   useGetBusinessWalletQuery,
+  useGetBusinessWalletTransactionsQuery,
+  useTopupWalletMutation,
   useGetCategoriesQuery,
   useGetBusinessShiftsQuery,
   useGetBusinessShiftQuery,

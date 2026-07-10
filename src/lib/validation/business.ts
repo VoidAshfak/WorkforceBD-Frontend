@@ -127,6 +127,20 @@ export const businessPreferencesSchema = z.object({
   uniform_required: z.boolean().default(false),
 });
 
+/**
+ * Wallet top-up (`POST /business/wallet/topup`). Minimum ৳100; `method` is
+ * recorded for the log only (placeholder funding, no external capture yet).
+ */
+export const topupSchema = z.object({
+  amount: z.coerce.number().min(100, "Minimum top-up is ৳100"),
+  method: z.enum(["bkash", "nagad", "bank_transfer"]).optional(),
+});
+
+/** Validated output (amount coerced to number) — sent to the API. */
+export type TopupInput = z.infer<typeof topupSchema>;
+/** Raw form shape before coercion — used as react-hook-form's field values. */
+export type TopupFormInput = z.input<typeof topupSchema>;
+
 export type BusinessProfileInput = z.infer<typeof businessProfileSchema>;
 export type BusinessLocationInput = z.infer<typeof businessLocationSchema>;
 export type BusinessDocumentsInput = z.infer<typeof businessDocumentsSchema>;

@@ -30,7 +30,11 @@ import CheckInSheet from "@/components/shifts/CheckInSheet";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import BottomSheet from "@/components/ui/BottomSheet";
 import Button from "@/components/ui/Button";
-import { useCheckOutMutation, useWithdrawApplicationMutation } from "@/store/api/shiftsApi";
+import {
+  useCheckOutMutation,
+  useGetApplicationsQuery,
+  useWithdrawApplicationMutation,
+} from "@/store/api/shiftsApi";
 import { useOpenConversationMutation } from "@/store/api/chatApi";
 import { formatInstantTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
 import { googleMapsDirUrl, shiftLatLng } from "@/lib/geo";
@@ -118,8 +122,24 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
   const appId = shift.my_application?.id ?? "";
 
   const [status, setStatus] = useState<ApplicationStatus>(shift.my_application?.status ?? "pending");
-  const [checkedInAt, setCheckedInAt] = useState<string | null>(null);
-  const [checkedOutAt, setCheckedOutAt] = useState<string | null>(null);
+
+  // Attendance can't come from the shift payload — `my_application` is only
+  // `{ id, status }` there. Pull the enriched application row (which spreads the
+  // raw application, incl. the attendance stamps) from the tracker so a worker
+  // who already checked in doesn't see "Check in" again after remounting. Only
+  // needed once hired.
+  const { data: apps } = useGetApplicationsQuery(
+    { status: "accepted", page: 1, limit: 50 },
+    { skip: status !== "accepted" },
+  );
+  const record = apps?.items.find((a) => a.shifts.id === shift.id);
+
+  // Local overrides hold optimistic post-action updates; otherwise fall back to
+  // the server-known stamps so the button is correct on first paint.
+  const [localCheckedInAt, setLocalCheckedInAt] = useState<string | null>(null);
+  const [localCheckedOutAt, setLocalCheckedOutAt] = useState<string | null>(null);
+  const checkedInAt = localCheckedInAt ?? record?.checked_in_at ?? null;
+  const checkedOutAt = localCheckedOutAt ?? record?.checked_out_at ?? null;
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -169,7 +189,7 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
     setActionError(null);
     try {
       const res = await checkOut(appId).unwrap();
-      setCheckedOutAt(res.checked_out_at);
+      setLocalCheckedOutAt(res.checked_out_at);
     } catch (err) {
       setActionError(errMessage(err, "Check-out failed. Try again."));
     }
@@ -400,7 +420,7 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
         open={checkInOpen}
         onClose={() => setCheckInOpen(false)}
         applicationId={appId}
-        onCheckedIn={(at) => setCheckedInAt(at)}
+        onCheckedIn={(at) => setLocalCheckedInAt(at)}
       />
     </div>
   );

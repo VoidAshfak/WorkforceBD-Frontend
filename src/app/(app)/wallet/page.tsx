@@ -1,13 +1,17 @@
-import { Wallet } from "lucide-react";
+"use client";
 
-import ScreenPlaceholder from "@/components/common/ScreenPlaceholder";
+import BusinessWallet from "@/components/business/BusinessWallet";
+import WorkerWallet from "@/components/wallet/WorkerWallet";
+import { useAppSelector } from "@/store/hooks";
 
+/**
+ * Wallet — role-aware. Workers see earnings + withdrawals; business accounts see
+ * their escrow-funding wallet + top-ups. Both read/write only via the BFF.
+ */
 export default function WalletPage() {
-  return (
-    <ScreenPlaceholder
-      icon={Wallet}
-      title="Wallet"
-      subtitle="See your balance, earnings, and payout history. Withdraw to bKash or Nagad."
-    />
-  );
+  const activeRole = useAppSelector((s) => s.auth.activeRole);
+
+  if (activeRole === "business") return <BusinessWallet />;
+
+  return <WorkerWallet />;
 }

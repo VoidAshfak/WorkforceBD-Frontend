@@ -898,6 +898,8 @@ GET /api/v1/shifts?filter=high_pay&page=1&limit=10
 
 > `start_time` / `end_time` are time-only values returned as ISO timestamps on the `1970-01-01` epoch date — read the time portion only.
 >
+> **Timezone:** all shift dates/times are **Bangladesh local wall-clock (UTC+6)**. A shift saved as `18:18` means 6:18 PM BDT. The server converts these to real UTC when it checks the check-in/out window, cancellation timing, and expiry — so send/read them as local time, not UTC.
+>
 > `coordinates` is `{ latitude, longitude }` (WGS84) decoded from the PostGIS point, or `null` when the shift has no location set. Present on both the list and detail responses. On detail, the nested `business_profiles` carries its own `coordinates` in the same shape.
 >
 > `has_applied` / `my_application` reflect the **requesting worker's** own application on the shift. `my_application` is `{ id, status }` (status is any of the [application lifecycle](#applications) values, e.g. `pending`, `accepted`, `withdrawn`) or `null` if the worker never applied. When `has_applied` is `true` the apply button should be disabled — re-apply is rejected server-side (`409`), including after a withdrawal. Present on both list and detail.
@@ -1385,6 +1387,41 @@ Business wallet snapshot — funds shift escrow. Auto-creates the wallet on firs
 | `balance` | Spendable funds (can be escrowed into a new shift) |
 | `held` | Currently escrowed across active/pending shifts |
 | `total_spent` | Lifetime paid out to workers at settlement |
+
+**Errors:** `404 Create your business profile first` (no profile yet).
+
+---
+
+### GET `/business/wallet/transactions`
+
+Paginated business-wallet ledger (newest first) — the audit trail behind `balance`/`held`/`total_spent`. Every money move is recorded: top-up, escrow hold (shift submitted), escrow release at settlement (worker-payout spend + any remainder returned), escrow refund (cancel/reject), and cancellation-penalty spend. Role: `business` (read-only; verification not required).
+
+**Query:** `page`, `limit` (≤50, default 20).
+
+**Response `200`** (`data`):
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "type": "debit",
+      "amount": "2400.00",
+      "balance_after": "1100.00",
+      "held_after": "2400.00",
+      "description": "Escrow held: \"Evening waiter\"",
+      "shift_id": "uuid",
+      "reference_id": null,
+      "created_at": "2026-07-07T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 5, "total_pages": 1 }
+}
+```
+| Field | Meaning |
+|---|---|
+| `type` | `credit` (funds in / returned) or `debit` (funds held or spent) |
+| `balance_after` / `held_after` | Wallet spendable + escrowed balances **after** this entry |
+| `shift_id` | The shift the move relates to (`null` for top-ups) |
 
 **Errors:** `404 Create your business profile first` (no profile yet).
 
