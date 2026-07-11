@@ -467,8 +467,12 @@ Currently gated:
 | `POST /applications` (apply to shift) | `worker`, verified |
 | `POST /applications/:id/check-in` (shift check-in) | `worker`, verified |
 | `POST /applications/:id/check-out` (shift check-out) | `worker`, verified |
+| `POST /applications/:id/confirm-checkout` (handshake confirm) | `worker`, verified |
 | `POST /payments/payouts` (request withdrawal) | `worker`, verified |
 | `POST /payments/shifts/:shiftId/settle` (pay workers) | `business`, verified |
+| `POST /business/assignments/:id/checkout` (stamp worker check-out) | `business`, verified |
+| `POST /business/assignments/:id/confirm` (confirm + pay worker) | `business`, verified |
+| `POST /business/assignments/:id/no-show` (mark absentee) | `business`, verified |
 
 > Read `verification_status` from `/auth/verify-otp` or `/auth/me`, and route unverified users to onboarding (`profile.next_step`). Treat the client gate as UX only — the server is the source of truth.
 
@@ -484,6 +488,8 @@ Role-specific endpoint groups are **enforced by active context**, not just membe
 |---|---|
 | `worker` | `/worker/*`, `/shifts/*`, `/applications/*`, worker `/payments/*` (wallet, payouts) |
 | `business` | `/business/*`, business `/payments/*` (complete, settle) |
+
+`/disputes` (raise, list mine) and `/ratings` are party-based, not context-gated: any authenticated worker or business who is a party to the assignment may use them. `/disputes/admin/*` requires the `admin` role.
 
 A dual-role user in the **wrong context** gets `403 Switch to your <role> account to use this feature` — call `/auth/switch-role` (which returns a fresh token), then retry. Admin endpoints (`/admin/*`) are membership-based and unaffected. Context-neutral endpoints (notifications, chat, realtime, upload) are not gated by context.
 
@@ -1061,9 +1067,9 @@ The worker's application tracker (Activity tab → Applications), newest first. 
 
 | Field | Notes |
 |---|---|
-| `activity_status` | Worker-facing state blending application + shift + check-in: `pending` · `shortlisted` · `upcoming` (hired, not yet checked in) · `in_progress` (checked in) · `completed` · `not_selected` (rejected) · `withdrawn` · `cancelled` |
-| `message` | Contextual copy for the card, e.g. `"You got this shift! Get there on time for check-in."` |
-| `next_action` | `check_in` · `check_out` · `null` |
+| `activity_status` | Worker-facing state blending application + shift + handshake: `pending` · `shortlisted` · `upcoming` (hired, not yet checked in) · `in_progress` (checked in) · `awaiting_confirmation` (checked out, business confirm window open) · `confirm_needed` (business checked you out — confirm or dispute) · `disputed` (payment frozen for admin) · `no_show` (marked absent) · `completed` (handshake done / paid) · `not_selected` (rejected) · `withdrawn` · `cancelled` |
+| `message` | Contextual copy for the card, e.g. `"Checked out — waiting for the business to confirm your payment."` |
+| `next_action` | `check_in` · `check_out` · `confirm_checkout` · `raise_dispute` · `null` |
 | `roadmap` | Shift status journey — `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }` |
 
 **Response `200`**
@@ -1218,6 +1224,8 @@ Allowed only within the shift window: from **30 min before** `start_time` until 
 
 Worker checks out of a shift they previously checked into. Requires an admin-verified worker profile.
 
+This is the **worker's half of the completion handshake**: the assignment moves to `worker_done` and the business gets a confirm window (`auto_confirm_at`, **12h**) to confirm or dispute. If the business does nothing, the handshake **auto-confirms at the deadline and the worker is paid** — nobody has to be on-site or online (the unsupervised path). The business is notified in real time (`{ kind: "worker_checkout" }`).
+
 | Path param | Type | Notes |
 |---|---|---|
 | `id` | UUID | Application ID (must belong to the worker) |
@@ -1226,8 +1234,13 @@ Worker checks out of a shift they previously checked into. Requires an admin-ver
 ```json
 {
   "success": true,
-  "message": "Checked out",
-  "data": { "id": "uuid", "checked_out_at": "2026-06-22T20:00:00.000Z" }
+  "message": "Checked out — awaiting business confirmation",
+  "data": {
+    "id": "uuid",
+    "checked_out_at": "2026-06-22T20:00:00.000Z",
+    "completion_status": "worker_done",
+    "auto_confirm_at": "2026-06-23T08:00:00.000Z"
+  }
 }
 ```
 
@@ -1238,6 +1251,44 @@ Worker checks out of a shift they previously checked into. Requires an admin-ver
 | `404` | `Application not found` | Not found or not owned by this worker |
 | `409` | `You have not checked in yet` | No prior check-in |
 | `409` | `You have already checked out` | Already checked out |
+| `409` | `This assignment is already '<status>'` | Handshake already past checkout (e.g. `disputed`) |
+
+---
+
+### POST `/applications/:id/confirm-checkout`
+
+Worker confirms a **business-stamped** check-out (`business_done` → `confirmed`) — the worker's confirmation half when the business checked them out (forgotten checkout / early leave). Completes the handshake and **releases payment immediately**. Requires an admin-verified worker profile.
+
+If the worker instead believes the check-out is wrong (e.g. checked out too early), they should raise a dispute (see [Disputes](#disputes)) — otherwise the handshake auto-confirms at `auto_confirm_at`.
+
+| Path param | Type | Notes |
+|---|---|---|
+| `id` | UUID | Application ID (must belong to the worker) |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Check-out confirmed — payment released",
+  "data": {
+    "id": "uuid",
+    "completion_status": "confirmed",
+    "paid_amount": "1500",
+    "paid_at": "2026-06-22T20:05:00.000Z",
+    "payment_status": "received"
+  }
+}
+```
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `404` | `No roster assignment found for this application` | Not found / not owned |
+| `409` | `There is no business check-out waiting for your confirmation` | Assignment is not in `business_done` |
+| `409` | `This shift is under dispute — an admin will resolve it` | Frozen by a dispute |
+
+> On confirmation the worker's wallet is credited the flat `pay_amount`, the shift's escrow slice is released, and the business is notified (`{ kind: "handshake_confirmed" }`).
 
 ---
 
@@ -1478,7 +1529,7 @@ Home dashboard counters (screen 8).
 
 ---
 
-> **Escrow gate (screen 7).** Submitting a shift for review reserves its full estimated cost (`pay_amount × workers_needed`) from the business wallet — `balance` moves into `held`. The submit is rejected with `402` if the wallet can't cover it. Drafts hold nothing. The hold is **refunded** if the shift is cancelled or its post is rejected, and **released** at settlement (paid workers are spent; unspent no-show/unfilled portion returns to `balance`). A new business wallet is auto-created on first access/submit, seeded with a starting balance of **৳500**. Read it via [GET `/business/wallet`](#get-businesswallet) and add funds via [POST `/business/wallet/topup`](#post-businesswallettopup) — top-up is currently an **instant manual credit** (no external capture); real MFS corporate gateway authorization is wired in later.
+> **Escrow gate (screen 7).** Submitting a shift for review reserves its **full cost — worker pay + 10% platform fee** (`pay_amount × workers_needed × 1.10`, i.e. `total_cost` in the breakdown) — from the business wallet: `balance` moves into `held`. The submit is rejected with `402` if the wallet can't cover it. Drafts hold nothing. The hold is **refunded in full** if the shift is cancelled, its post is rejected, or it expires with nobody hired. It is **released slice by slice** as each worker's completion handshake finishes: the worker payout plus the platform fee (proportional to what was actually paid — no work, no fee) become spend, the slot remainder returns to `balance`, and when the last handshake resolves the leftover (unfilled slots) is returned. A new business wallet is auto-created on first access/submit, seeded with a starting balance of **৳500**. Read it via [GET `/business/wallet`](#get-businesswallet) and add funds via [POST `/business/wallet/topup`](#post-businesswallettopup) — top-up is currently an **instant manual credit** (no external capture); real MFS corporate gateway authorization is wired in later.
 
 ### POST `/business/shifts`
 
@@ -1552,7 +1603,7 @@ Counters on the returned shift:
 - `applicants_waiting` — pending + shortlisted applicants
 - `is_editable` — `true` only while the shift is `draft`/`published`/`applications_open` **and** nobody is hired yet. Use it to show/hide the edit button; the journey bar is driven by `status`.
 - `is_large_request` — `true` when `workers_needed` exceeds the large-request threshold (20)
-- `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **only the worker pay is escrowed today** (fee capture is deferred with the payment gateway), so `total_cost` is what the business ultimately owes, not the current hold.
+- `cost_breakdown` — `{ worker_pay, workers_needed, total_worker_pay, platform_fee, total_cost }` for the compensation screen. `platform_fee` is 10% of total worker pay; **`total_cost` (pay + fee) is what gets escrowed at submit**. The fee is captured per worker slot at payout time, proportional to what was actually paid — no-shows and denied disputes incur no fee.
 - `coordinates` — `{ latitude, longitude }` map pin, or `null` if unset (detail only, not on the list).
 - `roadmap` — status journey bar (detail only): `{ current, is_cancelled, is_draft, steps: [{ key, label, reached, current }] }`, built from the shift's status against `shift_status_enum`. Auto-advances as the shift progresses — see below.
 
@@ -1568,11 +1619,13 @@ Counters on the returned shift:
 | Last open slot hired (fully staffed) | `worker_confirmed` |
 | First worker checks in | `checked_in` |
 | All hired workers checked in | `active` |
-| Last checked-in worker checks out **after** the shift window ends | `completed` |
-| Business settles payment | `paid` → `closed` |
+| Last checked-in worker checks out **after** the shift window ends (or the sweeper closes attendance on an ended shift) | `completed` |
+| Settle/finalize hits open disputes | `payment_pending` (parks until the admin rules) |
+| Every assignment's handshake resolved (paid / no-show / dispute ruled) | `closed` (leftover escrow returned) |
 | Business cancels | `cancelled` (off-path) |
+| Shift ends with **zero hires** (`pending_approval`/`published`/`applications_open`) | `cancelled` — auto-expired by the sweeper, full escrow refunded, business notified |
 
-A transition only fires when it moves the shift **forward**, so skipped/duplicate/concurrent events are safe. `POST /payments/shifts/:id/complete` is a manual fallback for the `completed` step (e.g. no one checked out); settlement (`paid`→`closed`) is the terminal event.
+A transition only fires when it moves the shift **forward**, so skipped/duplicate/concurrent events are safe. `POST /payments/shifts/:id/complete` is a manual fallback for the `completed` step; the shift **closes automatically** once the last completion handshake resolves — the business does not have to call settle at all (see [Completion handshake](#completion-handshake--how-a-worker-gets-paid)).
 
 ---
 
@@ -1756,7 +1809,9 @@ Live-attendance roster for an owned shift — every hired worker with their deri
 |---|---|---|
 | `id` | UUID | Shift ID (must be owned by this business) |
 
-Per-worker `status` is derived: `waiting` (hired, not yet arrived) → `checked_in` → `checked_out`.
+Per-worker `status` blends attendance and the completion handshake: `waiting` (hired, not yet arrived) → `checked_in` → `checked_out` → `awaiting_business_confirm` (worker checked out — confirm or dispute) / `awaiting_worker_confirm` (you stamped the check-out) → `paid`; off-path: `no_show`, `disputed`.
+
+`next_action` tells the business what it can do on the row: `confirm_checkout` (pay the worker), `checkout` (stamp a forgotten check-out), `mark_no_show` (absentee), or `null`.
 
 > `checkin_code` is a short-lived rotating code derived server-side from the shift's secret (the secret itself is never returned). It rotates every ~30 s; re-fetch the roster before `checkin_code_expires_in` (seconds) elapses to refresh the displayed QR.
 
@@ -1781,11 +1836,17 @@ Per-worker `status` is derived: `waiting` (hired, not yet arrived) → `checked_
     "roster": [
       {
         "assignment_id": "uuid",
+        "application_id": "uuid",
         "worker": { "id": "uuid", "full_name": "Rahim Hossain", "profile_picture": "https://...", "reliability_score": "94" },
-        "status": "checked_in",
+        "status": "awaiting_business_confirm",
         "checked_in_at": "2026-06-22T12:00:00.000Z",
-        "checked_out_at": null,
-        "checkin_method": "gps"
+        "checked_out_at": "2026-06-22T20:00:00.000Z",
+        "checkin_method": "gps",
+        "completion_status": "worker_done",
+        "auto_confirm_at": "2026-06-23T08:00:00.000Z",
+        "paid_amount": null,
+        "paid_at": null,
+        "next_action": "confirm_checkout"
       }
     ]
   }
@@ -1793,6 +1854,62 @@ Per-worker `status` is derived: `waiting` (hired, not yet arrived) → `checked_
 ```
 
 **Errors:** `404 Shift not found` (missing or not owned), `422`.
+
+---
+
+### Completion handshake — how a worker gets paid
+
+Every hired worker's payment goes through a **two-sided handshake** on their roster assignment. Money moves **per worker** the moment their handshake completes — not in one shift-level batch.
+
+```
+worker checks out ────────────► worker_done ──┐
+                                              ├─ business confirms ─► confirmed → WORKER PAID
+business stamps check-out ────► business_done─┤   worker confirms  ─► confirmed → WORKER PAID
+                                              └─ 12h pass, no action ► auto-confirmed → WORKER PAID
+either side objects at any point before payment ──► disputed (frozen) ─► admin rules → resolved
+worker never arrives ─────────► no_show (escrow slice returned; worker may dispute)
+```
+
+- **Supervised:** worker checks out on-site → business taps **confirm** on the roster → paid instantly.
+- **Unsupervised:** nobody has to act. A background sweeper (every 10 min) expires ended shifts nobody was hired for (full refund), auto-checks-out workers when the shift window ends, auto-confirms handshakes 12h after check-out, marks absentees no-show, and closes the shift — payment is guaranteed even if the business never opens the app.
+- Each payment releases that worker's **escrow slice** (`pay_amount` + its platform fee): the worker payout and the fee (10%, proportional to what was paid) become business spend, any remainder returns to the business wallet. When the last handshake resolves the shift **auto-finalizes**: leftover escrow (unfilled slots) is returned and the shift closes.
+- Completed handshakes unlock **ratings** in both directions (see [Ratings](#ratings)); both parties get a `rate_prompt` nudge.
+
+### POST `/business/assignments/:id/checkout`
+
+Business stamps a check-out for a worker who forgot to check out (or left early). Opens the **worker's** confirm window: the worker confirms (paid instantly), disputes, or the handshake auto-confirms after 12h. No money moves yet. Role: `business`, **admin-verified**.
+
+| Path param | Type | Notes |
+|---|---|---|
+| `id` | UUID | Assignment ID (from the roster; shift must be owned) |
+
+**Response `200`** — `"Worker checked out — awaiting worker confirmation"`, data: the updated assignment (`completion_status: "business_done"`, `auto_confirm_at`).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `404` | `Assignment not found` | Missing / not on an owned shift |
+| `409` | `This worker never checked in` | No check-in to close |
+| `409` | `This worker has already checked out` | Check-out already stamped |
+| `409` | `This assignment is already '<status>'` | Handshake already past checkout |
+| `409` | `This shift was cancelled` | Cancelled shift |
+
+### POST `/business/assignments/:id/confirm`
+
+Business confirms a worker's check-out (`worker_done` → `confirmed`) — the business's half of the handshake. **Pays the worker the flat `pay_amount` immediately** and releases the escrow slice. Role: `business`, **admin-verified**.
+
+**Response `200`** — `"Check-out confirmed — worker paid"`, data: the paid assignment (`completion_status: "confirmed"`, `paid_amount`, `paid_at`).
+
+**Errors:** `404`; `409 There is no worker check-out waiting for your confirmation` (not `worker_done`); `409 This assignment is under dispute — an admin will resolve it`.
+
+### POST `/business/assignments/:id/no-show`
+
+Marks a hired worker who never checked in as absent, once the shift has started: application + assignment flip to `no_show`, the worker's `no_show_count` increments, and the slot's escrow slice returns to the business wallet. The worker is notified and **may dispute** (an admin ruling can overturn it and pay from the business balance). Role: `business`, **admin-verified**.
+
+**Response `200`** — `"Worker marked as no-show"`.
+
+**Errors:** `404`; `409 This worker has checked in — they are not a no-show`; `409 The shift has not started yet`; `409 This assignment is already '<status>'`.
 
 ---
 
@@ -2109,18 +2226,21 @@ Total unread messages across the caller's conversations (scoped to the active ac
 
 Money module — worker wallet + ledger, payout (withdrawal) requests, business shift settlement, and admin payout processing. Base path: `/api/v1/payments`. Every endpoint requires `Authorization: Bearer <access_token>`; the role differs per endpoint group (worker / business / admin).
 
-**Pay model (current):** flat per-worker pay. Settling a shift pays every hired worker the shift's `pay_amount`. No hourly math or surcharge yet. Worker payouts are funded by the **business escrow** held when the shift was submitted (see [POST `/business/shifts`](#post-businessshifts)); settlement releases it.
+**Pay model (current):** flat per-worker pay, released **per assignment** by the [completion handshake](#completion-handshake--how-a-worker-gets-paid). Each worker is paid `pay_amount` the moment their handshake completes (mutual confirm, settle, or the 12h auto-confirm) — no hourly math yet. Worker payouts and the **10% platform fee** (charged per payout, proportional) are funded by the **business escrow** (pay + fee) held when the shift was submitted (see [POST `/business/shifts`](#post-businessshifts)); each payment releases that worker's escrow slice.
 
 ### Money flow
 
 ```
-business: POST /payments/shifts/:id/complete   (mid-run → completed; auto-fires on last checkout)
+worker checks out (or business stamps it / sweeper auto-checks-out at shift end)
         │
         ▼
-business: POST /payments/shifts/:id/settle      (completed → paid → closed)
-        │   each hired worker who checked in credited flat pay_amount → wallet
-        │   accepted-but-absent workers marked no_show (unpaid)
-        │   ledger 'credit' rows written; paid workers notified "Payment received!"
+handshake completes                             (confirm by other side, business settle,
+        │                                        or 12h auto-confirm — whichever first)
+        │   worker credited flat pay_amount → wallet   ("Payment received!")
+        │   that slot's escrow slice released; disputes freeze the slice for the admin
+        ▼
+last handshake resolved → shift auto-finalizes  (leftover escrow returned; shift → closed)
+        │
         ▼
 worker:   GET  /payments/wallet                 (balance grows)
         │
@@ -2132,7 +2252,7 @@ admin:    PATCH /payments/admin/payouts/:id     approve → sent (total_withdraw
                                                 reject  → failed (amount refunded to balance)
 ```
 
-All balance changes run inside DB transactions with a ledger (`transactions`) entry. Settlement is **one-shot** per shift (guarded by shift status). Payout amounts are **held at request time** (debited immediately) so they can't be double-spent; admin approval finalizes, rejection refunds.
+All balance changes run inside DB transactions with a ledger (`transactions`) entry; each per-assignment payment is **claim-guarded** (one-shot even under concurrent confirm/settle/sweep). Payout amounts are **held at request time** (debited immediately) so they can't be double-spent; admin approval finalizes, rejection refunds.
 
 ---
 
@@ -2163,7 +2283,7 @@ Worker wallet snapshot (screen 13). Auto-creates the wallet on first access. Rol
 | `balance` | Withdrawable now |
 | `total_earned` | Lifetime credited earnings |
 | `total_withdrawn` | Lifetime sent payouts |
-| `pending_settlement` | Flat pay for `completed` but not-yet-settled shifts the worker is hired on **and has checked in to** (no-show shifts are excluded) |
+| `pending_settlement` | Flat pay for attended assignments whose handshake hasn't paid out yet (open, awaiting confirmation, or frozen by a dispute) |
 | `weekly_earnings` | Earning credits in the last 7 days |
 | `shifts_completed` | Count of paid shifts |
 
@@ -2227,11 +2347,16 @@ Marks a live owned shift `completed`, which unlocks payment. Role: `business`. A
 
 ### POST `/payments/shifts/:shiftId/settle`
 
-Settles a completed owned shift: pays the flat `pay_amount` to every hired worker **who actually checked in**, writes ledger credits, flips the shift to `paid` then `closed` (settlement is the final lifecycle event), and notifies the paid workers. Role: `business`, **admin-verified**. One-shot.
+**Confirm-everything shortcut** over the [completion handshake](#completion-handshake--how-a-worker-gets-paid): walks every assignment on a `completed` (or `payment_pending`) owned shift and closes whatever is still open. Role: `business`, **admin-verified**. Idempotent per assignment (already-paid slices are skipped). Optional — the sweeper reaches the same end state on its own within the auto-confirm window.
 
-> **Attendance-gated.** Only `accepted` workers with a `checked_in_at` stamp are paid. Accepted workers who never checked in are marked `no_show` (no payment) in the same transaction — settlement is the moment attendance is reconciled.
+Per assignment:
+- never checked in → marked `no_show` (application too), escrow slice returned
+- checked in, forgot to check out → check-out stamped and handshake confirmed → **paid**
+- `worker_done` / `business_done` (open handshakes) → confirmed → **paid**
+- `disputed` → left frozen for the admin (`disputes_held` in the response)
+- `confirmed` / `resolved` / `no_show` → already settled, skipped
 
-> **Escrow release.** Worker pay is drawn from the shift's held escrow. The unspent remainder (no-show / unfilled slots) returns to the business wallet's spendable `balance`, and the shift's `escrow_status` flips to `released` — all inside the settlement transaction.
+If nothing is left disputed the shift **finalizes**: leftover escrow (unfilled slots) returns to the business wallet, `escrow_status` → `released`, shift → `closed`. With open disputes it parks at `payment_pending` and auto-closes when the last dispute is resolved.
 
 **Response `200`**
 ```json
@@ -2240,10 +2365,12 @@ Settles a completed owned shift: pays the flat `pay_amount` to every hired worke
   "message": "Shift settled and workers paid",
   "data": {
     "shift_id": "uuid",
-    "workers_paid": 7,
+    "workers_paid": 6,
     "no_show": 1,
+    "disputes_held": 1,
+    "already_settled": 0,
     "amount_each": "1200",
-    "total_paid": "8400"
+    "closed": false
   }
 }
 ```
@@ -2254,8 +2381,8 @@ Settles a completed owned shift: pays the flat `pay_amount` to every hired worke
 |---|---|---|
 | `404` | `Shift not found` | Missing or not owned |
 | `409` | `This shift is already settled` | Already `paid` or `closed` |
-| `409` | `Complete the shift before settling payment` | Shift not `completed` |
-| `400` | `No hired workers to pay for this shift` | No `accepted` applicants |
+| `409` | `Complete the shift before settling payment` | Shift not `completed`/`payment_pending` |
+| `400` | `No hired workers to settle for this shift` | No roster assignments |
 | `403` | `Your business profile must be verified by an admin first` | Not verified |
 
 ---
@@ -2310,6 +2437,123 @@ Approve (mark sent) or reject (refund) a pending payout. Role: `admin`. Approve 
 | `404` | `Payout request not found` | Unknown payout |
 | `409` | `This payout is already '<state>'` | Not `pending` |
 | `422` | `failure_reason is required when rejecting` | Reject without a reason |
+
+---
+
+## Disputes
+
+Payment/completion dispute flow over a shift assignment. Base path: `/api/v1/disputes`. Every endpoint requires `Authorization: Bearer <access_token>`. Raising and reading are **party-based** (the assignment's worker or the shift's owning business — no active-role gate); resolution is `admin`.
+
+Raising a dispute **freezes the assignment's handshake** (`completion_status` → `disputed`): the auto-confirm timer stops and no payment can move — settle and the sweeper skip the slice — until an admin rules. One open dispute per assignment.
+
+**Who disputes what (typical):**
+- worker → wrongly marked `no_show`, or a business-stamped check-out they don't accept
+- business → worker left early / didn't do the work, before confirming a `worker_done` check-out
+
+Already-paid assignments (`confirmed`/`resolved`) cannot be disputed — money moved; file a **report** instead.
+
+### POST `/disputes`
+
+Raise a dispute on an assignment you are a party to. The counterparty and the admin are notified in real time.
+
+**Body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `assignment_id` | UUID | ✅ | From the roster (business) or activity item (worker) |
+| `description` | string | ✅ | 10–2000 chars — what went wrong |
+
+**Response `201`** — `"Dispute raised — payment frozen until an admin resolves it"` with the dispute (status `open`, includes shift + assignment + party summaries).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `403` | `You are not a party to this assignment` | Neither the worker nor the owning business |
+| `404` | `Assignment not found` | Unknown assignment |
+| `409` | `Payment for this assignment is already settled — file a report instead` | Already paid |
+| `409` | `A dispute is already open for this assignment` | Duplicate |
+| `409` | `This worker has not checked in yet — mark a no-show or wait for the shift` | Nothing happened on-site yet |
+| `409` | `This shift was cancelled — its compensation is already settled` | Cancelled shift |
+
+### GET `/disputes/my`
+
+Disputes the caller is a party to (raised **or** against), newest first.
+
+**Query:** `status` (`open`·`under_review`·`resolved`·`dismissed`), `page` (default 1), `limit` (default 10, max 50).
+
+**Response `200`** — `{ items: [...], pagination: {...} }`.
+
+### GET `/disputes/admin`
+
+Admin dispute queue (default `status=open`), oldest-waiting first. Role: `admin`. Items include the shift (`title`, `pay_amount`), the frozen assignment (attendance stamps, `completion_status`), and both parties (`full_name`, `phone`).
+
+**Query:** `status`, `page`, `limit`.
+
+### PATCH `/disputes/admin/:id`
+
+Resolve a dispute. Role: `admin`. Executes the ruling atomically: pays the worker the ruled amount, settles the escrow slice (paid part = spend, remainder back to the business), unfreezes the assignment to `resolved`, notifies both parties, and finalizes/closes the shift if this was the last open handshake.
+
+| Param | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `id` | path | UUID | ✅ | Target dispute |
+| `decision` | body | enum | ✅ | `pay_full` (flat `pay_amount`) · `pay_partial` · `deny` (৳0) |
+| `amount` | body | number | for `pay_partial` | Must be > 0 and < the shift's `pay_amount` |
+| `resolution_note` | body | string | ✅ | ≤ 2000 chars — both parties see it |
+
+> **Overturned no-shows:** if the disputed assignment was a `no_show`, its escrow slice was already refunded — a `pay_full`/`pay_partial` ruling charges the amount **plus its platform fee** back to the business wallet's balance (which may go negative), restores the application to `accepted`, and decrements the worker's `no_show_count`.
+
+**Response `200`** — `"Dispute resolved"` with the updated dispute (`status: "resolved"`, `decision`, `resolved_amount`, `resolution_note`).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `404` | `Dispute not found` | Unknown dispute |
+| `409` | `This dispute is already '<state>'` | Already resolved/dismissed |
+| `409` | `The assignment was already processed — refresh the dispute` | Claim lost to a concurrent action |
+| `400` | `A partial amount must be between 0 and the shift pay (৳X)` | Bad partial amount |
+
+---
+
+## Ratings
+
+Post-shift mutual ratings. Base path: `/api/v1/ratings`. Every endpoint requires `Authorization: Bearer <access_token>`; access is **party-based** (like disputes) — the assignment's worker rates the business, the owning business rates the worker.
+
+A rating unlocks once the assignment's completion handshake finishes (`completion_status` = `confirmed` or `resolved`). Both parties receive a `rate_prompt` nudge in their handshake-completion notifications. **One rating per direction per shift** (DB-enforced). Each new rating recomputes the rated side's `reliability_score` (rolling average of received `overall_score`, 0–5), which feeds applicant screening and cancellation-penalty math.
+
+### POST `/ratings`
+
+**Body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `assignment_id` | UUID | ✅ | From the roster (business) or activity item (worker) |
+| `overall_score` | int | ✅ | 1–5 |
+| `punctuality_score` | int | — | 1–5 |
+| `behavior_score` | int | — | 1–5 |
+| `skill_score` | int | — | 1–5 |
+| `review` | string | — | ≤ 1000 chars |
+| `is_anonymous` | bool | — | Hides the rater from the rated side's view (default `false`) |
+
+**Response `201`** — `"Rating submitted"` with the rating (includes shift + rater/rated summaries). The rated user is notified (`{ kind: "rating_received" }`).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `403` | `You are not a party to this assignment` | Neither the worker nor the owning business |
+| `404` | `Assignment not found` | Unknown assignment |
+| `409` | `You can rate once the shift completion is confirmed` | Handshake not finished (`pending`/`worker_done`/`business_done`/`disputed`/`no_show`) |
+| `409` | `You have already rated this shift` | Duplicate (one per direction per shift) |
+
+### GET `/ratings/my`
+
+The caller's ratings plus their received summary.
+
+**Query:** `direction` (`received` default · `given`), `page` (default 1), `limit` (default 10, max 50).
+
+**Response `200`** — `{ items: [...], summary: { average, count }, pagination: {...} }`. On `received` items, an anonymous rating's rater is `null`.
 
 ---
 

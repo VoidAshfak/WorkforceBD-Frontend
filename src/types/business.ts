@@ -1,6 +1,6 @@
 /** Business-domain shapes (see /docs/api-guidelines.md → Business, Categories). */
 
-import type { ApplicationStatus, Pagination, Roadmap } from "@/types/shift";
+import type { ApplicationStatus, CompletionStatus, Pagination, Roadmap } from "@/types/shift";
 
 /** Shift type a business can post. */
 export type ShiftKind = "instant" | "scheduled" | "prebooked";
@@ -80,10 +80,10 @@ export type Category = {
 
 /**
  * Compensation breakdown carried on a shift (create response, list, detail).
- * Amounts are decimal strings. `platform_fee` is 10% of `total_worker_pay`, but
- * **only the worker pay is escrowed today** (fee capture is deferred with the
- * payment gateway) — so `total_cost` is what the business ultimately owes, not
- * the current hold.
+ * Amounts are decimal strings. `platform_fee` is 10% of `total_worker_pay`;
+ * **`total_cost` (pay + fee) is what gets escrowed at submit**. The fee is
+ * captured per worker slot at payout, proportional to what was actually paid —
+ * no-shows and denied disputes incur no fee.
  */
 export type ShiftCostBreakdown = {
   worker_pay: string;
@@ -254,4 +254,93 @@ export type DeleteShiftInput = {
   reason?: string;
   /** Required `true` to execute a penalty delete (backend 409s otherwise). */
   acknowledge_penalty?: boolean;
+};
+
+/* ----------------------- Live-attendance roster ------------------------- */
+
+/**
+ * Per-worker roster state — blends attendance and the completion handshake
+ * (`GET /business/shifts/:id/roster`).
+ */
+export type RosterWorkerStatus =
+  | "waiting"
+  | "checked_in"
+  | "checked_out"
+  | "awaiting_business_confirm"
+  | "awaiting_worker_confirm"
+  | "paid"
+  | "no_show"
+  | "disputed";
+
+/** What the business can do on a roster row right now. */
+export type RosterNextAction = "confirm_checkout" | "checkout" | "mark_no_show" | null;
+
+/** One hired worker on the live roster. */
+export type RosterEntry = {
+  assignment_id: string;
+  application_id: string;
+  worker: {
+    id: string;
+    full_name: string | null;
+    profile_picture: string | null;
+    reliability_score: string;
+  };
+  status: RosterWorkerStatus;
+  checked_in_at: string | null;
+  checked_out_at: string | null;
+  checkin_method: string | null;
+  completion_status: CompletionStatus;
+  /** Open handshakes auto-confirm (worker paid) at this instant. */
+  auto_confirm_at: string | null;
+  paid_amount: string | null;
+  paid_at: string | null;
+  next_action: RosterNextAction;
+};
+
+/**
+ * Live-attendance roster for an owned shift. `checkin_code` rotates every ~30 s
+ * — re-fetch before `checkin_code_expires_in` seconds elapse to keep the QR
+ * scannable (the shift secret itself is never returned).
+ */
+export type ShiftRoster = {
+  shift: {
+    id: string;
+    title: string;
+    status: string;
+    shift_date: string;
+    start_time: string;
+    end_time: string;
+    workers_needed: number;
+  };
+  checkin_code: string;
+  checkin_code_expires_in: number;
+  summary: { needed: number; assigned: number; checked_in: number };
+  roster: RosterEntry[];
+};
+
+/**
+ * Updated assignment returned by the handshake actions
+ * (`POST /business/assignments/:id/{checkout,confirm,no-show}`).
+ */
+export type AssignmentActionResult = {
+  id?: string;
+  completion_status?: CompletionStatus;
+  auto_confirm_at?: string | null;
+  paid_amount?: string | null;
+  paid_at?: string | null;
+};
+
+/** Business handshake actions on a roster assignment (path-whitelisted in the BFF). */
+export type AssignmentAction = "checkout" | "confirm" | "no-show";
+
+/** Result of the confirm-everything settle shortcut (`POST /payments/shifts/:id/settle`). */
+export type SettleResult = {
+  shift_id: string;
+  workers_paid: number;
+  no_show: number;
+  disputes_held: number;
+  already_settled: number;
+  amount_each: string;
+  /** `true` when no disputes remain and the shift finalized (escrow released). */
+  closed: boolean;
 };

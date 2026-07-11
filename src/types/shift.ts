@@ -101,20 +101,38 @@ export type CheckInMethod = "gps" | "qr";
 
 /**
  * Worker-facing blended state for the activity card — folds application status,
- * shift status, and check-in state into one value (`GET /applications`).
+ * shift status, and the completion handshake into one value (`GET /applications`).
  */
 export type ActivityStatus =
   | "pending"
   | "shortlisted"
   | "upcoming"
   | "in_progress"
+  | "awaiting_confirmation"
+  | "confirm_needed"
+  | "disputed"
+  | "no_show"
   | "completed"
   | "not_selected"
   | "withdrawn"
   | "cancelled";
 
 /** The single next action the worker can take, if any. */
-export type NextAction = "check_in" | "check_out" | null;
+export type NextAction = "check_in" | "check_out" | "confirm_checkout" | "raise_dispute" | null;
+
+/**
+ * Two-sided completion handshake on a roster assignment (see
+ * /docs/api-guidelines.md → Completion handshake). Payment moves per worker the
+ * moment their handshake reaches `confirmed`/`resolved`.
+ */
+export type CompletionStatus =
+  | "pending"
+  | "worker_done"
+  | "business_done"
+  | "confirmed"
+  | "resolved"
+  | "no_show"
+  | "disputed";
 
 /** One node in a shift's status journey. */
 export type RoadmapStep = { key: string; label: string; reached: boolean; current: boolean };
@@ -142,6 +160,30 @@ export type Application = {
   message?: string | null;
   next_action?: NextAction;
   roadmap?: Roadmap;
+  /** Roster assignment fields — feed disputes/ratings and the handshake UI. */
+  assignment_id?: string | null;
+  completion_status?: CompletionStatus | null;
+  /** Handshake auto-confirms (worker paid) at this instant if nobody acts. */
+  auto_confirm_at?: string | null;
+  paid_amount?: string | null;
+  paid_at?: string | null;
+};
+
+/** `POST /applications/:id/check-out` — opens the business's confirm window. */
+export type CheckOutResult = {
+  id: string;
+  checked_out_at: string;
+  completion_status: CompletionStatus;
+  auto_confirm_at: string | null;
+};
+
+/** `POST /applications/:id/confirm-checkout` — worker accepts a business-stamped check-out; pays immediately. */
+export type ConfirmCheckoutResult = {
+  id: string;
+  completion_status: CompletionStatus;
+  paid_amount: string;
+  paid_at: string;
+  payment_status: string;
 };
 
 /** Activity-tab header counts (`GET /applications/summary`). */

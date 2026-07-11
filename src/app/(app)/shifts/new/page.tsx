@@ -107,7 +107,7 @@ export default function CreateShiftPage() {
 /**
  * Create-shift form (business). A single scrollable form — title, category,
  * timing, pay, and headcount — posted to the BFF. Submitting sends it for admin
- * review and escrows the cost (`pay × workers`); "Save draft" holds nothing.
+ * review and escrows the full cost (`pay × workers × 1.10`); "Save draft" holds nothing.
  * The shift inherits the business profile's zone/address (not asked here).
  */
 function CreateShiftForm() {
@@ -154,15 +154,16 @@ function CreateShiftForm() {
   const pay = Number(values.pay_amount) || 0;
   const workers = Number(values.workers_needed) || 0;
 
-  // Client-side mirror of the backend `cost_breakdown`. Only the worker pay is
-  // escrowed today; the 10% platform fee is deferred with the payment gateway.
+  // Client-side mirror of the backend `cost_breakdown`. The full cost — worker
+  // pay + the 10% platform fee (`total_cost`) — is escrowed on submit; the fee is
+  // later captured per slot at payout, proportional to what's actually paid.
   const totalWorkerPay = pay * workers;
   const platformFee = Math.round(totalWorkerPay * PLATFORM_FEE_RATE);
   const totalCost = totalWorkerPay + platformFee;
   const largeRequest = workers > LARGE_REQUEST_THRESHOLD;
 
   const balance = Number(wallet.data?.balance ?? 0);
-  const underfunded = totalWorkerPay > 0 && totalWorkerPay > balance;
+  const underfunded = totalCost > 0 && totalCost > balance;
 
   const categoryName = categories.data?.find((c) => c.id === values.category_id)?.name;
 
@@ -383,7 +384,7 @@ function CreateShiftForm() {
                 <Wallet size={14} /> Escrow on submit
               </span>
               <span className={`font-bold ${underfunded ? "text-danger" : "text-ink"}`}>
-                {formatTaka(totalWorkerPay)}
+                {formatTaka(totalCost)}
               </span>
             </div>
             {underfunded ? (
@@ -550,12 +551,12 @@ function CreateShiftForm() {
                   <Wallet size={13} /> Escrowed on submit
                 </span>
                 <span className={`font-semibold ${underfunded ? "text-danger" : "text-ink"}`}>
-                  {formatTaka(totalWorkerPay)}
+                  {formatTaka(totalCost)}
                   {underfunded ? <span className="ml-1 font-normal">· top up needed</span> : null}
                 </span>
               </div>
               <p className="text-[11px] text-text-tertiary">
-                Only worker pay is held now; the fee is charged later.
+                Held in escrow now; unused amounts return to your wallet at settlement.
               </p>
             </div>
 

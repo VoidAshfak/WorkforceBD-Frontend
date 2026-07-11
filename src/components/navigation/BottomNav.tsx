@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { BOTTOM_NAV_ITEMS } from "@/config/navigation";
+import { navItemsForRole } from "@/config/navigation";
+import { useAppSelector } from "@/store/hooks";
 
 function isActive(href: string, pathname: string): boolean {
   if (href === "/") return pathname === "/";
@@ -19,6 +20,7 @@ const HIDDEN_ON = ["/profile/edit", "/shifts/new"];
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const activeRole = useAppSelector((s) => s.auth.activeRole);
 
   // Hide on focused sub-screens, and on a chat *thread* (`/chat/:id`) — but keep
   // it on the chat inbox (`/chat`).
@@ -27,6 +29,9 @@ export default function BottomNav() {
     pathname.startsWith("/chat/");
   if (hidden) return null;
 
+  // Explore is worker-only; the tab set is otherwise shared across roles.
+  const items = navItemsForRole(activeRole);
+
   return (
     <nav
       aria-label="Primary"
@@ -34,7 +39,7 @@ export default function BottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <ul className="mx-auto flex h-16 max-w-md items-stretch justify-around px-2">
-        {BOTTOM_NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = isActive(item.href, pathname);
           const Icon = item.icon;
 

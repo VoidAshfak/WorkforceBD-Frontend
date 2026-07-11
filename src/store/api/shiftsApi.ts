@@ -5,6 +5,8 @@ import type {
   Application,
   ApplicationStatus,
   CheckInMethod,
+  CheckOutResult,
+  ConfirmCheckoutResult,
   Coordinates,
   Paginated,
   Shift,
@@ -100,9 +102,12 @@ export const shiftsApi = createApi({
       invalidatesTags: ["Application"],
     }),
 
-    // Check-in/out don't change the application's status (stays `accepted`), so
-    // they skip cache invalidation — the card tracks attendance state locally
-    // from each mutation's result.
+    // Check-in/out leave the raw application `accepted`, but they DO change the
+    // enriched `activity_status`/`next_action` that the tracker rows carry — and
+    // those drive the derived attendance state (see @/lib/attendance). Invalidate
+    // the list so a remount reads the new state instead of a stale cached row
+    // (which would re-show "Check in"/"Check out"). The acting card still shows
+    // the right thing instantly via its local override.
     checkIn: build.mutation<
       { id: string; checked_in_at: string; checkin_method: CheckInMethod },
       { id: string; method: CheckInMethod; coordinates: Coordinates; qr_token?: string }
@@ -114,11 +119,24 @@ export const shiftsApi = createApi({
       }),
       transformResponse: (res: ApiEnvelope<{ id: string; checked_in_at: string; checkin_method: CheckInMethod }>) =>
         res.data,
+      invalidatesTags: ["Application"],
     }),
 
-    checkOut: build.mutation<{ id: string; checked_out_at: string }, string>({
+    // Check-out opens the business's confirm window (handshake → worker_done),
+    // moving `activity_status` to `awaiting_confirmation`. Invalidate so a remount
+    // shows "Awaiting confirmation" rather than a stale "Check out".
+    checkOut: build.mutation<CheckOutResult, string>({
       query: (id) => ({ url: `/applications/${id}/check-out`, method: "POST" }),
-      transformResponse: (res: ApiEnvelope<{ id: string; checked_out_at: string }>) => res.data,
+      transformResponse: (res: ApiEnvelope<CheckOutResult>) => res.data,
+      invalidatesTags: ["Application"],
+    }),
+
+    // Worker confirms a business-stamped check-out (business_done → confirmed);
+    // pays immediately. Refresh the tracker so the card reflects the paid state.
+    confirmCheckout: build.mutation<ConfirmCheckoutResult, string>({
+      query: (id) => ({ url: `/applications/${id}/confirm-checkout`, method: "POST" }),
+      transformResponse: (res: ApiEnvelope<ConfirmCheckoutResult>) => res.data,
+      invalidatesTags: ["Application"],
     }),
   }),
 });
@@ -142,4 +160,5 @@ export const {
   useWithdrawApplicationMutation,
   useCheckInMutation,
   useCheckOutMutation,
+  useConfirmCheckoutMutation,
 } = shiftsApi;

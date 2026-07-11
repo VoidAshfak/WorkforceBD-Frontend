@@ -13,8 +13,10 @@ import {
   LogOut,
   MapPin,
   RefreshCw,
+  ShieldAlert,
   Sparkles,
   Star,
+  UserCheck,
   UserX,
   XCircle,
 } from "lucide-react";
@@ -32,7 +34,13 @@ import {
   useWithdrawApplicationMutation,
 } from "@/store/api/shiftsApi";
 import { formatInstantTime, formatRelativeTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
-import type { Application, ApplicationStatus } from "@/types/shift";
+import { deriveAttendance } from "@/lib/attendance";
+import type {
+  ActivityStatus,
+  Application,
+  ApplicationStatus,
+  CompletionStatus,
+} from "@/types/shift";
 
 /** Pulls a human message off an RTK error, with a fallback. */
 function errMessage(err: unknown, fallback: string): string {
@@ -103,6 +111,30 @@ const TABS: { value: ApplicationStatus | undefined; label: string }[] = [
 
 /** Withdrawal is allowed by the backend only in these states. */
 const WITHDRAWABLE: ApplicationStatus[] = ["pending", "shortlisted"];
+
+type PillUI = { label: string; tone: string; icon: typeof CheckCircle2 };
+
+/**
+ * Status pill for a shift past check-out, driven by the blended `activity_status`
+ * (falling back to `completion_status`). Returns `null` while the worker is still
+ * pre-checkout, so the inline check-in/out actions stay in control.
+ */
+function handshakePill(
+  activity: ActivityStatus | undefined,
+  completion: CompletionStatus | null,
+  checkedOut: boolean,
+): PillUI | null {
+  const paid =
+    activity === "completed" || completion === "confirmed" || completion === "resolved";
+  if (paid) return { label: "Paid", tone: "bg-emerald/10 text-emerald", icon: CheckCircle2 };
+  if (activity === "disputed" || completion === "disputed")
+    return { label: "Disputed", tone: "bg-warning/15 text-text-muted", icon: ShieldAlert };
+  if (activity === "confirm_needed" || completion === "business_done")
+    return { label: "Confirm pay", tone: "bg-brand text-ink", icon: UserCheck };
+  if (activity === "awaiting_confirmation" || completion === "worker_done" || checkedOut)
+    return { label: "Awaiting confirm", tone: "bg-sky/10 text-sky", icon: Hourglass };
+  return null;
+}
 
 /**
  * Activity — role-aware tracker. Workers see their application tracker; business
@@ -234,9 +266,10 @@ function ApplicationCard({ app, index }: { app: Application; index: number }) {
   const [withdraw, { isLoading: withdrawing }] = useWithdrawApplicationMutation();
   const [checkOut, { isLoading: checkingOut }] = useCheckOutMutation();
 
-  // Attendance is tracked locally: it's seeded from the row (if the API sends
-  // the stamps) and updated from each mutation's result. The card stays mounted
-  // across list refetches, so this survives them.
+  // Attendance is tracked locally only for optimistic post-action updates; the
+  // baseline comes from `deriveAttendance` (the raw stamps aren't reliably sent,
+  // so a mid-shift worker must not fall back to "Check in"). The card stays
+  // mounted across list refetches, so the local override survives them.
   const [checkedInAt, setCheckedInAt] = useState<string | null>(app.checked_in_at ?? null);
   const [checkedOutAt, setCheckedOutAt] = useState<string | null>(app.checked_out_at ?? null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -248,6 +281,15 @@ function ApplicationCard({ app, index }: { app: Application; index: number }) {
   const BadgeIcon = badge.icon;
   const canWithdraw = WITHDRAWABLE.includes(app.status);
   const isAccepted = app.status === "accepted";
+
+  const derived = deriveAttendance(app);
+  const isCheckedIn = checkedInAt !== null || derived.checkedIn;
+  const isCheckedOut = checkedOutAt !== null || derived.checkedOut;
+
+  // Once the worker is past check-out, the completion handshake owns the state.
+  // Show a status pill (the worker acts on it in the detail screen) instead of
+  // the inline check-in/out actions.
+  const handshake = handshakePill(app.activity_status, app.completion_status ?? null, isCheckedOut);
 
   // Entrance: slide + fade up, staggered by list position (capped) so the feed
   // cascades in. Mount-only — cards persisting across filters don't re-animate.
@@ -345,17 +387,23 @@ function ApplicationCard({ app, index }: { app: Application; index: number }) {
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
         <span className="min-w-0 truncate text-[11px] text-text-tertiary">
-          {checkedInAt ? `Checked in ${formatInstantTime(checkedInAt)}` : `Applied ${formatRelativeTime(app.applied_at)}`}
+          {isCheckedIn
+            ? checkedInAt
+              ? `Checked in ${formatInstantTime(checkedInAt)}`
+              : "On shift"
+            : `Applied ${formatRelativeTime(app.applied_at)}`}
         </span>
 
-        {/* Accepted shifts get the live-attendance actions; pending/shortlisted
-            can withdraw. */}
-        {isAccepted ? (
-          checkedOutAt ? (
-            <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald/10 px-3 py-1.5 text-[12px] font-bold text-emerald">
-              <CheckCircle2 size={13} /> Completed
-            </span>
-          ) : checkedInAt ? (
+        {/* Past check-out → handshake status pill (act in detail). Otherwise the
+            live-attendance actions; pending/shortlisted can withdraw. */}
+        {handshake ? (
+          <span
+            className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-bold ${handshake.tone}`}
+          >
+            <handshake.icon size={13} /> {handshake.label}
+          </span>
+        ) : isAccepted ? (
+          isCheckedIn ? (
             <AttendanceAction
               onClick={onCheckOut}
               loading={checkingOut}

@@ -19,6 +19,7 @@ import {
 
 import Button from "@/components/ui/Button";
 import RoadmapBar from "@/components/shifts/RoadmapBar";
+import RosterTab from "@/components/business/RosterTab";
 import {
   useBulkDecideApplicantsMutation,
   useDecideApplicantMutation,
@@ -41,7 +42,13 @@ const ShiftLocationMap = dynamic(() => import("@/components/business/ShiftLocati
   loading: () => <div className="h-48 animate-pulse rounded-card bg-black/[0.05]" />,
 });
 
-type Tab = "details" | "applicants";
+type Tab = "details" | "applicants" | "roster";
+
+/** Maps a `?tab=` query value to a real tab, defaulting to details. */
+function tabFromParam(value: string | null): Tab {
+  if (value === "applicants" || value === "roster") return value;
+  return "details";
+}
 
 /**
  * Business view of an owned ("created") shift — its summary plus an applicant
@@ -53,7 +60,7 @@ type Tab = "details" | "applicants";
 export default function BusinessShiftDetail({ id }: { id: string }) {
   const router = useRouter();
   const params = useSearchParams();
-  const [tab, setTab] = useState<Tab>(params.get("tab") === "applicants" ? "applicants" : "details");
+  const [tab, setTab] = useState<Tab>(tabFromParam(params.get("tab")));
 
   // Shift `status` auto-advances server-side as the shift progresses (hire →
   // check-in → complete). Refetch on remount and window refocus so the journey
@@ -89,13 +96,16 @@ export default function BusinessShiftDetail({ id }: { id: string }) {
         onChange={setTab}
         waiting={shift.applicants_waiting}
         unread={unread.data ?? 0}
+        showRoster={shift.filled > 0}
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-6 pt-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tab === "details" ? (
           <Details shift={shift} />
-        ) : (
+        ) : tab === "applicants" ? (
           <ApplicantsTab shiftId={id} capacityFull={shift.is_full} />
+        ) : (
+          <RosterTab shiftId={id} />
         )}
       </div>
     </div>
@@ -141,11 +151,13 @@ function Tabs({
   onChange,
   waiting,
   unread,
+  showRoster,
 }: {
   tab: Tab;
   onChange: (t: Tab) => void;
   waiting: number;
   unread: number;
+  showRoster: boolean;
 }) {
   return (
     <div className="mt-4 flex gap-2 rounded-full bg-black/[0.05] p-1">
@@ -163,6 +175,11 @@ function Tabs({
           ) : null}
         </span>
       </TabButton>
+      {showRoster ? (
+        <TabButton active={tab === "roster"} onClick={() => onChange("roster")}>
+          Roster
+        </TabButton>
+      ) : null}
     </div>
   );
 }
@@ -247,7 +264,7 @@ function Details({ shift }: { shift: Shift }) {
             </div>
           </div>
           <p className="mt-2 text-[11px] text-text-tertiary">
-            {formatTaka(cb.total_worker_pay)} held now; the fee is charged later.
+            {formatTaka(cb.total_cost)} held in escrow; unused amounts return at settlement.
           </p>
         </div>
       ) : null}

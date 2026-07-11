@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowRight, ArrowLeftRight, BadgeCheck, Clock, LogOut, Pencil, ShieldX, Sparkles } from "lucide-react";
+import { ArrowRight, ArrowLeftRight, BadgeCheck, Clock, LogOut, Pencil, ShieldX, Sparkles, Star } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/slices/authSlice";
 import { useLogoutMutation, useSwitchRoleMutation } from "@/store/api/authApi";
+import { useGetRatingsQuery } from "@/store/api/engagementApi";
 import { workerApi, useGetWorkerProfileQuery } from "@/store/api/workerApi";
 import { shiftsApi } from "@/store/api/shiftsApi";
 import { businessApi } from "@/store/api/businessApi";
@@ -96,6 +97,7 @@ export default function ProfilePage() {
         <div className="flex-1">
           <p className="text-lg font-bold text-ink">{displayName ?? "Add your name"}</p>
           <p className="text-[14px] text-text-secondary">{user?.phone}</p>
+          <ProfileRating />
         </div>
         {activeRole === "worker" ? (
           <button
@@ -170,5 +172,32 @@ export default function ProfilePage() {
         Log out
       </Button>
     </div>
+  );
+}
+
+/**
+ * Received-ratings summary for the active account (worker or business). Ratings
+ * are party-based; `direction: "received"` returns the rolling average + count
+ * that the other side has given this user. Shown always — "New" before any land.
+ */
+function ProfileRating() {
+  const { data } = useGetRatingsQuery({ direction: "received" });
+  const average = data?.summary.average ?? 0;
+  const count = data?.summary.count ?? 0;
+
+  return (
+    <span className="mt-1 inline-flex items-center gap-1.5 text-[13px]">
+      <Star size={14} className={count > 0 ? "fill-brand text-brand" : "text-text-tertiary"} />
+      {count > 0 ? (
+        <span className="font-semibold text-ink">
+          {average.toFixed(1)}
+          <span className="ml-1 font-normal text-text-tertiary">
+            · {count} rating{count === 1 ? "" : "s"}
+          </span>
+        </span>
+      ) : (
+        <span className="text-text-tertiary">No ratings yet</span>
+      )}
+    </span>
   );
 }

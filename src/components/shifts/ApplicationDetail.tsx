@@ -10,14 +10,17 @@ import {
   ChevronRight,
   Clock,
   FileText,
+  Hourglass,
   Loader2,
   LogIn,
   LogOut,
   MapPin,
   MessageCircle,
   Navigation,
+  ShieldAlert,
   ShieldCheck,
   Star,
+  UserCheck,
   UserX,
   Users,
   Wallet,
@@ -27,19 +30,33 @@ import {
 
 import { BusinessAvatar } from "@/components/shifts/ShiftCard";
 import CheckInSheet from "@/components/shifts/CheckInSheet";
+import DisputeSheet from "@/components/engagement/DisputeSheet";
+import RatingSheet from "@/components/engagement/RatingSheet";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import BottomSheet from "@/components/ui/BottomSheet";
 import Button from "@/components/ui/Button";
 import {
   useCheckOutMutation,
+  useConfirmCheckoutMutation,
   useGetApplicationsQuery,
   useWithdrawApplicationMutation,
 } from "@/store/api/shiftsApi";
 import { useOpenConversationMutation } from "@/store/api/chatApi";
-import { formatInstantTime, formatShiftDate, formatTaka, formatTimeRange } from "@/lib/format";
+import { useGetRatingsQuery } from "@/store/api/engagementApi";
+import {
+  formatCountdown,
+  formatInstantTime,
+  formatShiftDate,
+  formatTaka,
+  formatTimeRange,
+} from "@/lib/format";
 import { googleMapsDirUrl, shiftLatLng } from "@/lib/geo";
 import { gsap, useGSAP } from "@/lib/gsap";
-import type { ApplicationStatus, Shift } from "@/types/shift";
+import { deriveAttendance } from "@/lib/attendance";
+import type { ApplicationStatus, CompletionStatus, Shift } from "@/types/shift";
+
+/** Handshake states where money has moved and the shift is done for the worker. */
+const PAID_STATES: CompletionStatus[] = ["confirmed", "resolved"];
 
 /** Pulls a human message off an RTK error, with a fallback. */
 function errMessage(err: unknown, fallback: string): string {
@@ -67,8 +84,9 @@ type Step = { label: string; state: StepState };
 /** Builds the compact status track; terminal states branch to a red end node. */
 function buildSteps(
   status: ApplicationStatus,
-  checkedInAt: string | null,
-  checkedOutAt: string | null,
+  checkedIn: boolean,
+  checkedOut: boolean,
+  completion: CompletionStatus | null,
 ): Step[] {
   const applied: Step = { label: "Applied", state: "done" };
   if (status === "withdrawn") return [applied, { label: "Withdrawn", state: "failed" }];
@@ -88,10 +106,16 @@ function buildSteps(
   let onShift: StepState = "upcoming";
   let completed: StepState = "upcoming";
   if (status === "accepted") {
-    if (checkedOutAt) {
+    const paid = completion ? PAID_STATES.includes(completion) : false;
+    if (paid) {
       onShift = "done";
       completed = "done";
-    } else if (checkedInAt) {
+    } else if (checkedOut) {
+      // Checked out but the handshake (business confirm / auto-confirm) is still
+      // open — the "Done" node is in progress, not finished.
+      onShift = "done";
+      completed = "current";
+    } else if (checkedIn) {
       onShift = "done";
       completed = "current";
     } else {
@@ -135,19 +159,46 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
   const record = apps?.items.find((a) => a.shifts.id === shift.id);
 
   // Local overrides hold optimistic post-action updates; otherwise fall back to
-  // the server-known stamps so the button is correct on first paint.
+  // the server-known state so the buttons are correct on first paint. The
+  // enriched tracker row also carries the handshake (`completion_status`,
+  // `next_action`, `assignment_id`, `auto_confirm_at`).
   const [localCheckedInAt, setLocalCheckedInAt] = useState<string | null>(null);
   const [localCheckedOutAt, setLocalCheckedOutAt] = useState<string | null>(null);
+  const [localCompletion, setLocalCompletion] = useState<CompletionStatus | null>(null);
+
+  // Timestamps drive only the display line; the button logic runs off booleans
+  // derived from the enriched fields (raw stamps aren't reliably serialized).
   const checkedInAt = localCheckedInAt ?? record?.checked_in_at ?? null;
   const checkedOutAt = localCheckedOutAt ?? record?.checked_out_at ?? null;
+  const derived = deriveAttendance(record);
+  const isCheckedIn = localCheckedInAt !== null || derived.checkedIn;
+  const isCheckedOut = localCheckedOutAt !== null || derived.checkedOut;
+  const completion = localCompletion ?? record?.completion_status ?? null;
+  const assignmentId = record?.assignment_id ?? null;
+  const autoConfirmAt = record?.auto_confirm_at ?? null;
+
+  // Whether this worker has already rated the business for this shift — a rating
+  // is one-per-direction-per-shift, so hide the "Rate" action once it's given.
+  const isPaid = completion ? PAID_STATES.includes(completion) : false;
+  const { data: givenRatings } = useGetRatingsQuery({ direction: "given" }, { skip: !isPaid });
+  const alreadyRated = Boolean(
+    givenRatings?.items.some(
+      (r) => (assignmentId && r.assignment_id === assignmentId) || r.shifts?.id === shift.id,
+    ),
+  );
+
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKey | null>(null);
 
   const [withdraw, { isLoading: withdrawing }] = useWithdrawApplicationMutation();
   const [checkOut, { isLoading: checkingOut }] = useCheckOutMutation();
+  const [confirmCheckout, { isLoading: confirming }] = useConfirmCheckoutMutation();
   const [openConversation, { isLoading: openingChat }] = useOpenConversationMutation();
 
   const sui = STATUS_UI[status];
@@ -155,10 +206,15 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
   const remaining = Math.max(shift.capacity - shift.filled, 0);
   const fillPct = shift.capacity > 0 ? Math.round((shift.filled / shift.capacity) * 100) : 0;
   const reliability = Math.max(0, Math.min(100, Math.round(Number(biz.reliability_score ?? 0))));
-  const steps = buildSteps(status, checkedInAt, checkedOutAt);
+  const steps = buildSteps(status, isCheckedIn, isCheckedOut, completion);
   const isAccepted = status === "accepted";
   const canWithdraw = WITHDRAWABLE.includes(status);
   const gmapsUrl = googleMapsDirUrl(shiftLatLng(shift));
+
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 3500);
+  };
 
   useGSAP(
     () => {
@@ -190,8 +246,20 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
     try {
       const res = await checkOut(appId).unwrap();
       setLocalCheckedOutAt(res.checked_out_at);
+      setLocalCompletion(res.completion_status ?? "worker_done");
     } catch (err) {
       setActionError(errMessage(err, "Check-out failed. Try again."));
+    }
+  };
+
+  const doConfirmCheckout = async () => {
+    setActionError(null);
+    try {
+      const res = await confirmCheckout(appId).unwrap();
+      setLocalCompletion(res.completion_status ?? "confirmed");
+      showToast("Check-out confirmed — payment released.");
+    } catch (err) {
+      setActionError(errMessage(err, "Couldn't confirm. Try again."));
     }
   };
 
@@ -251,17 +319,29 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
       {/* Contextual primary action */}
       <div data-rise className="mt-3">
         <PrimaryAction
+          status={status}
           isAccepted={isAccepted}
           canWithdraw={canWithdraw}
-          checkedInAt={checkedInAt}
-          checkedOutAt={checkedOutAt}
+          checkedIn={isCheckedIn}
+          checkedOut={isCheckedOut}
+          completion={completion}
+          autoConfirmAt={autoConfirmAt}
+          canDispute={Boolean(assignmentId)}
+          alreadyRated={alreadyRated}
           checkingOut={checkingOut}
+          confirming={confirming}
           onCheckIn={() => {
             setActionError(null);
             setCheckInOpen(true);
           }}
           onCheckOut={doCheckOut}
+          onConfirmCheckout={doConfirmCheckout}
           onWithdraw={() => setConfirmWithdraw(true)}
+          onDispute={() => {
+            setActionError(null);
+            setDisputeOpen(true);
+          }}
+          onRate={() => setRateOpen(true)}
         />
         {actionError ? <p className="mt-1.5 text-[12px] font-medium text-danger">{actionError}</p> : null}
       </div>
@@ -355,7 +435,7 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
           <span className="rounded-full bg-brand/20 px-3 py-1.5 text-[12px] font-bold text-ink">Flat pay</span>
         </div>
         <p className="mt-2.5 text-[13px] leading-5 text-text-secondary">
-          {payoutNote(status, checkedInAt, checkedOutAt)}
+          {payoutNote(status, isCheckedIn, isCheckedOut, completion)}
         </p>
         <button
           type="button"
@@ -422,67 +502,202 @@ export default function ApplicationDetail({ shift }: { shift: Shift }) {
         applicationId={appId}
         onCheckedIn={(at) => setLocalCheckedInAt(at)}
       />
+
+      {assignmentId ? (
+        <DisputeSheet
+          open={disputeOpen}
+          assignmentId={assignmentId}
+          title={shift.title}
+          hint={
+            status === "no_show"
+              ? "Marked absent but you were there? Tell us what happened."
+              : "Disagree with the check-out or pay? Tell us what happened."
+          }
+          onClose={() => setDisputeOpen(false)}
+          onDone={(msg) => {
+            setDisputeOpen(false);
+            setLocalCompletion("disputed");
+            showToast(msg);
+          }}
+        />
+      ) : null}
+
+      {assignmentId ? (
+        <RatingSheet
+          open={rateOpen}
+          assignmentId={assignmentId}
+          ratee={biz.business_name}
+          onClose={() => setRateOpen(false)}
+          onDone={(msg) => {
+            setRateOpen(false);
+            showToast(msg);
+          }}
+        />
+      ) : null}
+
+      {toast ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[70] flex justify-center px-5">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-[13px] font-semibold text-white shadow-lg">
+            <CheckCircle2 size={15} className="text-emerald" /> {toast}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /** Money status line under the payout figure. */
-function payoutNote(status: ApplicationStatus, checkedIn: string | null, checkedOut: string | null): string {
-  switch (status) {
-    case "pending":
-    case "shortlisted":
-      return "You'll earn this if you're hired.";
-    case "accepted":
-      if (checkedOut) return "Settles after the business confirms — lands in your wallet.";
-      if (checkedIn) return "On shift — check out to lock your pay.";
-      return "Check in at the venue to start earning.";
-    case "no_show":
-      return "No payout — marked absent.";
-    default:
-      return "No payout for this shift.";
+function payoutNote(
+  status: ApplicationStatus,
+  checkedIn: boolean,
+  checkedOut: boolean,
+  completion: CompletionStatus | null,
+): string {
+  if (status === "no_show") return "No payout — marked absent.";
+  if (status !== "accepted") {
+    if (status === "pending" || status === "shortlisted") return "You'll earn this if you're hired.";
+    return "No payout for this shift.";
   }
+  if (completion && PAID_STATES.includes(completion)) return "Paid — it's in your wallet.";
+  if (completion === "disputed") return "Frozen while an admin reviews your dispute.";
+  if (completion === "business_done") return "The business logged your check-out — confirm to get paid now.";
+  if (checkedOut || completion === "worker_done")
+    return "Waiting for the business to confirm — it auto-confirms and pays out on the deadline.";
+  if (checkedIn) return "On shift — check out to lock your pay.";
+  return "Check in at the venue to start earning.";
 }
 
+/**
+ * Contextual action + handshake status for the applied shift. Once the worker
+ * has checked out, there are no more attendance buttons — the block shows the
+ * completion state (awaiting confirm / confirm-needed / paid / disputed) and, at
+ * the end, the "rate the business" prompt.
+ */
 function PrimaryAction({
+  status,
   isAccepted,
   canWithdraw,
-  checkedInAt,
-  checkedOutAt,
+  checkedIn,
+  checkedOut,
+  completion,
+  autoConfirmAt,
+  canDispute,
+  alreadyRated,
   checkingOut,
+  confirming,
   onCheckIn,
   onCheckOut,
+  onConfirmCheckout,
   onWithdraw,
+  onDispute,
+  onRate,
 }: {
+  status: ApplicationStatus;
   isAccepted: boolean;
   canWithdraw: boolean;
-  checkedInAt: string | null;
-  checkedOutAt: string | null;
+  checkedIn: boolean;
+  checkedOut: boolean;
+  completion: CompletionStatus | null;
+  autoConfirmAt: string | null;
+  canDispute: boolean;
+  alreadyRated: boolean;
   checkingOut: boolean;
+  confirming: boolean;
   onCheckIn: () => void;
   onCheckOut: () => void;
+  onConfirmCheckout: () => void;
   onWithdraw: () => void;
+  onDispute: () => void;
+  onRate: () => void;
 }) {
+  // No-show — offer a dispute if the worker believes it's wrong.
+  if (status === "no_show") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-center gap-2 rounded-2xl bg-danger/10 py-3.5 text-[15px] font-bold text-danger">
+          <UserX size={18} /> Marked no-show
+        </div>
+        {canDispute ? <DisputeLink onDispute={onDispute} label="I was there — dispute this" /> : null}
+      </div>
+    );
+  }
+
   if (isAccepted) {
-    if (checkedOutAt) {
+    const paid = completion ? PAID_STATES.includes(completion) : false;
+
+    // Handshake done — money moved. Show a paid banner + the rating prompt (or a
+    // "rated" acknowledgement once the worker has already rated the business).
+    if (paid) {
       return (
-        <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald/10 py-3.5 text-[15px] font-bold text-emerald">
-          <CheckCircle2 size={18} /> Shift completed
+        <div className="space-y-2">
+          <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald/10 py-3.5 text-[15px] font-bold text-emerald">
+            <CheckCircle2 size={18} /> Shift completed · paid
+          </div>
+          {alreadyRated ? (
+            <div className="flex items-center justify-center gap-1.5 rounded-2xl border border-border py-3 text-[14px] font-semibold text-text-secondary">
+              <Star size={15} className="fill-brand text-brand" /> You rated the business
+            </div>
+          ) : (
+            <Button fullWidth variant="secondary" onClick={onRate}>
+              <Star size={16} /> Rate the business
+            </Button>
+          )}
         </div>
       );
     }
-    if (checkedInAt) {
+
+    // Frozen by a dispute.
+    if (completion === "disputed") {
+      return (
+        <div className="flex items-center justify-center gap-2 rounded-2xl bg-warning/15 py-3.5 text-[15px] font-bold text-text-muted">
+          <ShieldAlert size={18} /> Under review
+        </div>
+      );
+    }
+
+    // Business stamped the check-out — worker confirms (paid now) or disputes.
+    if (completion === "business_done") {
+      return (
+        <div className="space-y-2">
+          <Button fullWidth loading={confirming} onClick={onConfirmCheckout}>
+            <UserCheck size={17} /> Confirm check-out & get paid
+          </Button>
+          {canDispute ? <DisputeLink onDispute={onDispute} label="This isn't right — dispute" /> : null}
+        </div>
+      );
+    }
+
+    // Checked out — waiting on the business (auto-confirms on the deadline).
+    if (checkedOut) {
+      const countdown = formatCountdown(autoConfirmAt);
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center justify-center gap-2 rounded-2xl bg-sky/10 py-3.5 text-[14px] font-bold text-sky">
+            <Hourglass size={17} /> Awaiting confirmation
+            {countdown ? <span className="font-semibold text-sky/80">· auto-confirms {countdown}</span> : null}
+          </div>
+          {canDispute ? <DisputeLink onDispute={onDispute} label="Something wrong? Raise a dispute" /> : null}
+        </div>
+      );
+    }
+
+    // Checked in — the only remaining attendance action is check-out.
+    if (checkedIn) {
       return (
         <Button fullWidth loading={checkingOut} onClick={onCheckOut} className="bg-ink text-white">
           <LogOut size={17} /> Check out
         </Button>
       );
     }
+
+    // Hired, not yet on site.
     return (
       <Button fullWidth onClick={onCheckIn}>
         <LogIn size={17} /> Check in
       </Button>
     );
   }
+
   if (canWithdraw) {
     return (
       <Button fullWidth variant="secondary" onClick={onWithdraw} className="border-danger/30 text-danger">
@@ -491,6 +706,19 @@ function PrimaryAction({
     );
   }
   return null;
+}
+
+/** Subtle text link that opens the dispute sheet. */
+function DisputeLink({ onDispute, label }: { onDispute: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onDispute}
+      className="flex w-full items-center justify-center gap-1.5 py-1 text-[12px] font-semibold text-text-tertiary active:scale-95"
+    >
+      <ShieldAlert size={13} /> {label}
+    </button>
+  );
 }
 
 /* ---------------------------- horizontal timeline ---------------------------- */

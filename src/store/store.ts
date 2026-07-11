@@ -5,6 +5,7 @@ import { workerApi } from "@/store/api/workerApi";
 import { shiftsApi } from "@/store/api/shiftsApi";
 import { businessApi } from "@/store/api/businessApi";
 import { paymentsApi } from "@/store/api/paymentsApi";
+import { engagementApi } from "@/store/api/engagementApi";
 import { notificationsApi } from "@/store/api/notificationsApi";
 import { chatApi } from "@/store/api/chatApi";
 import authReducer from "@/store/slices/authSlice";
@@ -18,6 +19,7 @@ export const makeStore = () =>
       [shiftsApi.reducerPath]: shiftsApi.reducer,
       [businessApi.reducerPath]: businessApi.reducer,
       [paymentsApi.reducerPath]: paymentsApi.reducer,
+      [engagementApi.reducerPath]: engagementApi.reducer,
       [notificationsApi.reducerPath]: notificationsApi.reducer,
       [chatApi.reducerPath]: chatApi.reducer,
     },
@@ -28,6 +30,7 @@ export const makeStore = () =>
         shiftsApi.middleware,
         businessApi.middleware,
         paymentsApi.middleware,
+        engagementApi.middleware,
         notificationsApi.middleware,
         chatApi.middleware,
       ),

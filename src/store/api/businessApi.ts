@@ -3,6 +3,8 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type {
   ApplicantDecision,
   ApplicantList,
+  AssignmentAction,
+  AssignmentActionResult,
   BulkAction,
   BulkResult,
   BusinessDashboard,
@@ -15,6 +17,8 @@ import type {
   CancellationPreview,
   Category,
   DeleteShiftInput,
+  SettleResult,
+  ShiftRoster,
 } from "@/types/business";
 import type {
   BusinessDocumentsInput,
@@ -57,6 +61,7 @@ export const businessApi = createApi({
     "BizShift",
     "BizProfile",
     "BizApplicants",
+    "BizRoster",
   ],
   endpoints: (build) => ({
     getBusinessProfile: build.query<BusinessProfile, void>({
@@ -209,6 +214,47 @@ export const businessApi = createApi({
       ],
     }),
 
+    // Live-attendance roster. The `checkin_code` rotates ~30 s, so the roster
+    // view polls; keep the cache short-lived and tagged for handshake actions.
+    getShiftRoster: build.query<ShiftRoster, string>({
+      query: (id) => ({ url: `/business/shifts/${id}/roster`, method: "GET" }),
+      transformResponse: (res: ApiEnvelope<ShiftRoster>) => res.data,
+      providesTags: (_r, _e, id) => [{ type: "BizRoster", id }],
+    }),
+
+    // Completion-handshake action on a roster assignment. `confirm` pays the
+    // worker (touches the wallet); `no-show` returns the escrow slice. All three
+    // move the roster + shift status, so refresh the roster, wallet, and shift.
+    actOnAssignment: build.mutation<
+      AssignmentActionResult,
+      { assignmentId: string; action: AssignmentAction; shiftId: string }
+    >({
+      query: ({ assignmentId, action }) => ({
+        url: `/business/assignments/${assignmentId}/${action}`,
+        method: "POST",
+      }),
+      transformResponse: (res: ApiEnvelope<AssignmentActionResult>) => res.data,
+      invalidatesTags: (_r, _e, { shiftId }) => [
+        { type: "BizRoster", id: shiftId },
+        { type: "BizShift", id: shiftId },
+        "BizWallet",
+        "BizDashboard",
+      ],
+    }),
+
+    // Confirm-everything settle shortcut — closes every open handshake on a
+    // completed shift. Pays workers (wallet) and advances the shift status.
+    settleShift: build.mutation<SettleResult, string>({
+      query: (shiftId) => ({ url: `/payments/shifts/${shiftId}/settle`, method: "POST" }),
+      transformResponse: (res: ApiEnvelope<SettleResult>) => res.data,
+      invalidatesTags: (_r, _e, shiftId) => [
+        { type: "BizRoster", id: shiftId },
+        { type: "BizShift", id: shiftId },
+        "BizWallet",
+        "BizDashboard",
+      ],
+    }),
+
     createShift: build.mutation<BusinessShift, CreateShiftInput>({
       query: (body) => ({ url: "/business/shifts", method: "POST", body }),
       transformResponse: (res: ApiEnvelope<BusinessShift>) => res.data,
@@ -259,6 +305,9 @@ export const {
   useGetShiftApplicantsQuery,
   useDecideApplicantMutation,
   useBulkDecideApplicantsMutation,
+  useGetShiftRosterQuery,
+  useActOnAssignmentMutation,
+  useSettleShiftMutation,
   useCreateShiftMutation,
   useGetCancellationPreviewQuery,
   useDeleteShiftMutation,

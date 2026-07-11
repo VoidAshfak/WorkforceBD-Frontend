@@ -97,6 +97,26 @@ export function formatInstantTime(iso: string): string {
 }
 
 /**
+ * Compact "time from now" for a future deadline (e.g. handshake auto-confirm):
+ * `soon`, `in 45m`, `in 8h`, `in 2d`. Returns `""` for a missing/past instant so
+ * callers can hide the hint once it lapses. Input is a full ISO datetime.
+ */
+export function formatCountdown(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const target = new Date(iso).getTime();
+  if (Number.isNaN(target)) return "";
+  const seconds = Math.round((target - Date.now()) / 1000);
+  if (seconds <= 0) return "";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return "soon";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
+}
+
+/**
  * Compact "time ago" for feed timestamps: `Now`, `5m`, `3h`, `2d`, else a
  * short date like `17 Jun`. Input is a full ISO datetime.
  */
