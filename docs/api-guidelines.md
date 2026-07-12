@@ -321,14 +321,16 @@ Returns a **new access token** carrying the new context (`active_role`). The app
 
 Get a new access token using a valid refresh token.
 
-**Request Body**
+**Request Body** (worker/business)
 ```json
 {
   "refresh_token": "<refresh_token>"
 }
 ```
 
-**Response `200`**
+**Admin dashboard:** send an **empty body** (`{}`) with `credentials: "include"` — the refresh token is read from the `admin_refresh_token` httpOnly cookie set at login. A body token, if present, takes precedence.
+
+**Response `200`** (worker/business)
 ```json
 {
   "success": true,
@@ -337,6 +339,15 @@ Get a new access token using a valid refresh token.
     "accessToken": "<new_jwt>",
     "refreshToken": "<new_refresh_token>"
   }
+}
+```
+
+**Response `200`** (admin session) — no `refreshToken` in the body; the rotated token is re-set in the `admin_refresh_token` cookie instead.
+```json
+{
+  "success": true,
+  "message": "Token refreshed",
+  "data": { "accessToken": "<new_jwt>" }
 }
 ```
 
@@ -364,6 +375,14 @@ Get a new access token using a valid refresh token.
 }
 ```
 
+**Error `422`** — no refresh token in the body **and** no admin cookie present
+```json
+{
+  "success": false,
+  "message": "Validation failed"
+}
+```
+
 > Call this when any protected request returns `401`. **Replace both** stored `accessToken` and `refreshToken` — the old refresh token is invalidated on use (token rotation).
 >
 > **Reuse detection:** refresh tokens are single-use. Replaying a token that was already rotated revokes the **entire session** (treated as theft). Never reuse or share a refresh token across requests. Tokens are stored hashed at rest, so a token value cannot be recovered from the database.
@@ -374,12 +393,14 @@ Get a new access token using a valid refresh token.
 
 Revokes the session tied to the refresh token.
 
-**Request Body**
+**Request Body** (worker/business)
 ```json
 {
   "refresh_token": "<refresh_token>"
 }
 ```
+
+**Admin dashboard:** empty body (`{}`) with `credentials: "include"` — the token comes from the `admin_refresh_token` cookie, which this endpoint also clears.
 
 **Response `200`**
 ```json
@@ -389,7 +410,7 @@ Revokes the session tied to the refresh token.
 }
 ```
 
-> Delete both tokens from client storage after this call.
+> Worker/business: delete both tokens from client storage after this call. Admin: drop the in-memory access token; the cookie is cleared server-side.
 
 ---
 
@@ -453,12 +474,19 @@ Admin sign-in, **step 2 of 2**. Verifies the mailed code and issues an admin ses
   "message": "Admin authentication successful",
   "data": {
     "accessToken": "<jwt with active_role: admin>",
-    "refreshToken": "<refresh_token>",
     "user": { "id": "uuid", "phone": "+8801...", "email": "admin@gmail.com", "username": "admin", "roles": ["admin"] },
     "active_role": "admin"
   }
 }
 ```
+
+The refresh token is **not** in the body — it is set as an httpOnly **session cookie**:
+
+```
+Set-Cookie: admin_refresh_token=<token>; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Secure
+```
+
+(`Secure` in production only.) No `Expires`/`Max-Age` → the browser discards it when the browser closes. `HttpOnly` → no page script can ever read it (XSS-proof). `Path=/api/v1/auth` → sent only to auth endpoints.
 
 **Errors**
 
@@ -470,7 +498,7 @@ Admin sign-in, **step 2 of 2**. Verifies the mailed code and issues an admin ses
 > Token lifecycle uses the same `/auth/refresh` and `/auth/logout`, but admin sessions run a tighter policy:
 > - **Access token lives 5 minutes** (worker/business: 15) — the dashboard must refresh on a ≤5-minute cadence while in use.
 > - **10-minute sliding idle timeout, enforced server-side.** Every successful refresh pushes the session's idle deadline 10 minutes forward. A refresh attempted after the deadline returns `401 "Session expired due to inactivity"` and revokes the whole session — the admin signs in again with 2FA.
-> - **Frontend storage:** keep both tokens in `sessionStorage` (see [Token Storage Recommendation](#token-storage-recommendation)) — the session then survives page refreshes but ends when the tab closes, matching the idle policy.
+> - **Frontend storage:** keep the access token **in memory only**; the refresh token lives entirely in the httpOnly cookie. On page load (or refresh/F5) call `POST /auth/refresh` with an empty body and `credentials: "include"` — the cookie authenticates it and a fresh access token comes back. If it returns 401, route to login. The session thus survives page refresh and tab close, and ends when the **browser** closes (session cookie) or after 10 idle minutes (server-side).
 
 ---
 
@@ -3177,8 +3205,8 @@ Cloudinary returns `{ secure_url: "https://res.cloudinary.com/..." }` — pass t
 |---|---|
 | Web | `httpOnly` cookie (accessToken) + memory or secure cookie (refreshToken) |
 | React Native / Mobile | Secure storage (e.g. `expo-secure-store`, iOS Keychain) |
-| Admin dashboard (web) | `sessionStorage` for both tokens — survives a page refresh (F5), dies when the tab closes |
+| Admin dashboard (web) | Access token in **memory only**; refresh token in the server-set `admin_refresh_token` httpOnly session cookie (nothing in web storage) |
 
 > Never store tokens in `localStorage` — vulnerable to XSS.
 >
-> **Why sessionStorage for admin:** storing admin tokens only in memory logs the admin out on every page refresh; `localStorage` would keep the session across tab close, which the admin policy forbids. `sessionStorage` gives exactly the desired lifecycle: refresh-proof within the tab, gone on tab close. The 10-minute idle timeout is enforced server-side regardless (see admin auth below).
+> **Why a session cookie for admin:** `sessionStorage`/`localStorage` are readable by any script on the page (XSS exposure); an `HttpOnly` cookie is not. With no `Expires`, the cookie dies when the browser closes — the session survives page refresh (F5) and tab close, but not a browser restart. On page load the dashboard recovers its access token by calling `POST /auth/refresh` (empty body, `credentials: "include"`). `SameSite=Strict` + `Path=/api/v1/auth` keep the cookie off cross-site and non-auth requests. The 10-minute idle timeout is enforced server-side regardless.

@@ -23,6 +23,13 @@ export type BackendResult<T> = {
   /** HTTP status code (or `503` when the host is unreachable). */
   status: number;
   body: T & { success?: boolean; message?: string; errors?: unknown[] };
+  /**
+   * Raw `Set-Cookie` lines from the backend. The admin auth endpoints set their
+   * refresh token this way; because the BFF — not the browser — is the client
+   * here, that cookie lands on the server and has to be picked up explicitly.
+   * Read it with {@link readSetCookie}.
+   */
+  setCookie: string[];
 };
 
 /** Options for a single {@link backend} request. */
@@ -32,7 +39,22 @@ type Options = {
   body?: unknown;
   /** Bearer token injected as `Authorization`. Sourced from httpOnly cookies. */
   accessToken?: string;
+  /** `Cookie` header value, e.g. `admin_refresh_token=…` for the admin auth routes. */
+  cookie?: string;
 };
+
+/** Pulls one cookie's value out of a response's `Set-Cookie` lines. */
+export function readSetCookie(setCookie: string[], name: string): string | undefined {
+  for (const line of setCookie) {
+    const pair = line.split(";", 1)[0] ?? "";
+    const eq = pair.indexOf("=");
+    if (eq > 0 && pair.slice(0, eq).trim() === name) {
+      const value = pair.slice(eq + 1).trim();
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Server-side gateway to the WorkforceBD REST API.
@@ -49,11 +71,12 @@ type Options = {
  */
 export async function backend<T = Record<string, unknown>>(
   path: string,
-  { method = "GET", body, accessToken }: Options = {},
+  { method = "GET", body, accessToken, cookie }: Options = {},
 ): Promise<BackendResult<T>> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  if (cookie) headers["Cookie"] = cookie;
 
   const startedAt = Date.now();
   let res: Response;
@@ -75,6 +98,7 @@ export async function backend<T = Record<string, unknown>>(
       ok: false,
       status: 503,
       body: { success: false, message: "Cannot reach the server. Try again." } as never,
+      setCookie: [],
     };
   }
 
@@ -93,5 +117,10 @@ export async function backend<T = Record<string, unknown>>(
     ms: Date.now() - startedAt,
   });
 
-  return { ok: res.ok, status: res.status, body: parsed as BackendResult<T>["body"] };
+  return {
+    ok: res.ok,
+    status: res.status,
+    body: parsed as BackendResult<T>["body"],
+    setCookie: res.headers.getSetCookie(),
+  };
 }

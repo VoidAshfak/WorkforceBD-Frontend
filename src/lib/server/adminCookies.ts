@@ -23,6 +23,21 @@ import type { NextResponse } from "next/server";
 export const ADMIN_ACCESS_COOKIE = "wfbd_adm_at";
 export const ADMIN_REFRESH_COOKIE = "wfbd_adm_rt";
 
+/**
+ * The cookie the **backend** sets its admin refresh token in (`Path=/api/v1/auth`,
+ * httpOnly, session-scoped). The guideline assumes the dashboard talks to the API
+ * directly, so the browser would hold this — but here the BFF is the API's client,
+ * so the cookie lands on our server. We lift the token out of `Set-Cookie`, keep it
+ * in {@link ADMIN_REFRESH_COOKIE}, and send it back as a `Cookie` header on
+ * `/auth/refresh` and `/auth/logout`. Same guarantee, one hop further from the browser.
+ */
+export const BACKEND_ADMIN_REFRESH_COOKIE = "admin_refresh_token";
+
+/** `Cookie` header carrying the refresh token back to the backend's auth routes. */
+export function adminRefreshCookieHeader(refreshToken: string): string {
+  return `${BACKEND_ADMIN_REFRESH_COOKIE}=${refreshToken}`;
+}
+
 /** Inactivity window. Mirrors the backend policy — used for the client-side countdown. */
 export const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { backend } from "@/lib/server/backend";
-import { ADMIN_REFRESH_COOKIE, clearAdminCookies } from "@/lib/server/adminCookies";
+import {
+  ADMIN_REFRESH_COOKIE,
+  adminRefreshCookieHeader,
+  clearAdminCookies,
+} from "@/lib/server/adminCookies";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("admin-logout");
@@ -16,9 +20,11 @@ export async function POST(req: NextRequest) {
   const refresh = req.cookies.get(ADMIN_REFRESH_COOKIE)?.value;
 
   if (refresh) {
+    // Admin logout is cookie-driven, same as refresh: empty body, token in the header.
     const result = await backend("/auth/logout", {
       method: "POST",
-      body: { refresh_token: refresh },
+      body: {},
+      cookie: adminRefreshCookieHeader(refresh),
     });
     log.info("admin logout", { status: result.status });
   }

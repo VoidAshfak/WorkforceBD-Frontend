@@ -52,7 +52,7 @@ export async function callAuthedBackend<T = Record<string, unknown>>(
 
   let result = token
     ? await backend<T>(path, { ...opts, accessToken: token })
-    : ({ ok: false, status: 401, body: {} as never } as BackendResult<T>);
+    : ({ ok: false, status: 401, body: {} as never, setCookie: [] } as BackendResult<T>);
 
   if (!result.ok && result.status === 401 && refresh) {
     log.debug("access token rejected, refreshing", { path });

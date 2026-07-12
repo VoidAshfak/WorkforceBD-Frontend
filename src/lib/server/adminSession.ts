@@ -3,10 +3,12 @@ import "server-only";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { backend, type BackendResult } from "@/lib/server/backend";
+import { backend, readSetCookie, type BackendResult } from "@/lib/server/backend";
 import {
   ADMIN_ACCESS_COOKIE,
   ADMIN_REFRESH_COOKIE,
+  BACKEND_ADMIN_REFRESH_COOKIE,
+  adminRefreshCookieHeader,
   clearAdminCookies,
   setAdminCookies,
 } from "@/lib/server/adminCookies";
@@ -43,9 +45,14 @@ function rotate(refreshToken: string): Promise<Rotated | null> {
   if (existing) return existing;
 
   const pending = (async (): Promise<Rotated | null> => {
-    const res = await backend<{ data: Rotated }>("/auth/refresh", {
+    // The admin refresh flow is cookie-driven: empty body, token in the `Cookie`
+    // header. The response carries only the new access token — the rotated refresh
+    // token comes back as a `Set-Cookie`, which lands here because the BFF, not the
+    // browser, is the backend's client.
+    const res = await backend<{ data: { accessToken: string } }>("/auth/refresh", {
       method: "POST",
-      body: { refresh_token: refreshToken },
+      body: {},
+      cookie: adminRefreshCookieHeader(refreshToken),
     });
     if (!res.ok) {
       // Includes `401 Session expired due to inactivity` — the backend's own
@@ -53,7 +60,18 @@ function rotate(refreshToken: string): Promise<Rotated | null> {
       log.info("admin refresh rejected", { status: res.status });
       return null;
     }
-    return res.body.data;
+
+    const accessToken = res.body.data?.accessToken;
+    if (!accessToken) {
+      log.error("admin refresh returned no access token");
+      return null;
+    }
+
+    // A rotation that doesn't re-set the cookie means the backend kept the token in
+    // play. Reusing a token it *had* rotated would trip reuse detection and kill the
+    // session, so only fall back when it sent nothing new.
+    const rotatedRefresh = readSetCookie(res.setCookie, BACKEND_ADMIN_REFRESH_COOKIE);
+    return { accessToken, refreshToken: rotatedRefresh ?? refreshToken };
   })();
 
   inFlight.set(refreshToken, pending);
@@ -100,7 +118,7 @@ export async function proxyAdmin(
 
   let result: BackendResult<unknown> = access
     ? await backend(path, { ...opts, accessToken: access })
-    : ({ ok: false, status: 401, body: {} } as BackendResult<unknown>);
+    : ({ ok: false, status: 401, body: {}, setCookie: [] } as BackendResult<unknown>);
 
   let rotated: Rotated | undefined;
 
