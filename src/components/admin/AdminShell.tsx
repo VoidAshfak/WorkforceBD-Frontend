@@ -19,12 +19,17 @@ import {
   useGetAdminDashboardQuery,
 } from "@/store/api/adminApi";
 
-/** Must mirror `IDLE_TIMEOUT_MS` in `@/lib/server/adminCookies` — the server is the enforcer. */
+/** Mirrors the backend's 10-minute idle policy — the server is the real enforcer. */
 const IDLE_MS = 10 * 60 * 1000;
 /** Warn the admin while they can still save the session. */
 const WARN_AT_MS = 60 * 1000;
-/** Don't ping the server more often than this while the admin is active. */
-const HEARTBEAT_MS = 60 * 1000;
+/**
+ * Heartbeat while the admin is active. The admin access token lives only 5
+ * minutes, so a probe every 2 minutes keeps it rotated (each call refreshes it
+ * server-side, which also pushes the backend's idle deadline forward) and means
+ * a real click never lands on a stale token.
+ */
+const HEARTBEAT_MS = 2 * 60 * 1000;
 
 const COLLAPSE_KEY = "wfbd_admin_sidebar";
 
@@ -55,12 +60,14 @@ function writeCollapse(next: boolean): void {
  * Authenticated dashboard chrome: collapsible left panel, top bar, and the
  * session guard.
  *
- * Session rules (see `@/lib/server/adminCookies`): the token lives in httpOnly
- * browser-session cookies, so **closing the browser ends the session**, and the
- * server drops it after 10 minutes of inactivity. This component mirrors that
- * clock client-side — it slides the server deadline forward while the admin is
- * actually working, warns at one minute left, and signs out at zero rather than
- * letting them discover the dead session mid-action.
+ * Session rules (see `@/lib/server/adminCookies`): the tokens live in httpOnly
+ * browser-session cookies, so a page refresh keeps the admin signed in but
+ * **closing the browser ends the session**. The backend drops a session after 10
+ * minutes of inactivity and is the only enforcer of that.
+ *
+ * This component just mirrors the clock for the human: it keeps the session warm
+ * while they're actually working, warns at one minute left, and signs out at zero
+ * rather than letting them discover a dead session mid-action.
  */
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -99,8 +106,9 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     else if (admin && !admin.roles.includes("admin")) void endSession("expired");
   }, [isError, admin, endSession, router]);
 
-  // Idle clock. Real user input resets it; while the admin is active we ping the
-  // session endpoint at most once a minute, which slides the server's deadline.
+  // Idle clock. Real user input resets it; while the admin is still within the
+  // idle window we ping the session endpoint every couple of minutes, which
+  // rotates the 5-minute access token and slides the backend's idle deadline.
   useEffect(() => {
     if (!admin) return;
 
@@ -124,7 +132,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         void endSession("timeout");
         return;
       }
-      if (idleFor < HEARTBEAT_MS && Date.now() - lastPing.current > HEARTBEAT_MS) {
+      if (Date.now() - lastPing.current > HEARTBEAT_MS) {
         lastPing.current = Date.now();
         void refetch();
       }

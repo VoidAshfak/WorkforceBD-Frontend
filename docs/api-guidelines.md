@@ -467,7 +467,10 @@ Admin sign-in, **step 2 of 2**. Verifies the mailed code and issues an admin ses
 | `400` | `Invalid or expired code` | Wrong, expired, or already-used code |
 | `401` | `Invalid credentials` | Username no longer resolves to an active admin |
 
-> Token lifecycle (refresh/logout) is identical to worker/business sessions — use the same `/auth/refresh` and `/auth/logout`.
+> Token lifecycle uses the same `/auth/refresh` and `/auth/logout`, but admin sessions run a tighter policy:
+> - **Access token lives 5 minutes** (worker/business: 15) — the dashboard must refresh on a ≤5-minute cadence while in use.
+> - **10-minute sliding idle timeout, enforced server-side.** Every successful refresh pushes the session's idle deadline 10 minutes forward. A refresh attempted after the deadline returns `401 "Session expired due to inactivity"` and revokes the whole session — the admin signs in again with 2FA.
+> - **Frontend storage:** keep both tokens in `sessionStorage` (see [Token Storage Recommendation](#token-storage-recommendation)) — the session then survives page refreshes but ends when the tab closes, matching the idle policy.
 
 ---
 
@@ -3174,5 +3177,8 @@ Cloudinary returns `{ secure_url: "https://res.cloudinary.com/..." }` — pass t
 |---|---|
 | Web | `httpOnly` cookie (accessToken) + memory or secure cookie (refreshToken) |
 | React Native / Mobile | Secure storage (e.g. `expo-secure-store`, iOS Keychain) |
+| Admin dashboard (web) | `sessionStorage` for both tokens — survives a page refresh (F5), dies when the tab closes |
 
 > Never store tokens in `localStorage` — vulnerable to XSS.
+>
+> **Why sessionStorage for admin:** storing admin tokens only in memory logs the admin out on every page refresh; `localStorage` would keep the session across tab close, which the admin policy forbids. `sessionStorage` gives exactly the desired lifecycle: refresh-proof within the tab, gone on tab close. The 10-minute idle timeout is enforced server-side regardless (see admin auth below).

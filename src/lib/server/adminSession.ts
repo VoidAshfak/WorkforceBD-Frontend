@@ -8,15 +8,69 @@ import {
   ADMIN_ACCESS_COOKIE,
   ADMIN_REFRESH_COOKIE,
   clearAdminCookies,
-  isIdleStampValid,
   setAdminCookies,
-  touchIdleStamp,
 } from "@/lib/server/adminCookies";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("admin-session");
 
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+type Rotated = { accessToken: string; refreshToken: string };
+
+/**
+ * In-flight refreshes, keyed by the refresh token being spent.
+ *
+ * Refresh tokens are **single-use**: the backend rotates them and rejects the old
+ * one. The admin access token lives only 5 minutes, so a page load easily fires
+ * several admin calls that all expire together — without this, each would spend
+ * the same refresh token, exactly one would win, and the losers would look like a
+ * dead session and log the admin out. Sharing one rotation per token fixes that:
+ * the first caller performs it, the rest await the same promise and re-store the
+ * same rotated pair.
+ */
+const inFlight = new Map<string, Promise<Rotated | null>>();
+
+/**
+ * How long a completed rotation stays cached against the token it spent. A
+ * request the browser sent *before* the new cookie landed still carries the old
+ * token; it must be handed the already-rotated pair rather than re-spending a
+ * token the backend has now burned.
+ */
+const ROTATION_GRACE_MS = 30_000;
+
+function rotate(refreshToken: string): Promise<Rotated | null> {
+  const existing = inFlight.get(refreshToken);
+  if (existing) return existing;
+
+  const pending = (async (): Promise<Rotated | null> => {
+    const res = await backend<{ data: Rotated }>("/auth/refresh", {
+      method: "POST",
+      body: { refresh_token: refreshToken },
+    });
+    if (!res.ok) {
+      // Includes `401 Session expired due to inactivity` — the backend's own
+      // 10-minute idle deadline, which also revokes the session.
+      log.info("admin refresh rejected", { status: res.status });
+      return null;
+    }
+    return res.body.data;
+  })();
+
+  inFlight.set(refreshToken, pending);
+
+  void pending.then((result) => {
+    if (!result) {
+      // A dead session shouldn't be cached — the next call must ask again.
+      inFlight.delete(refreshToken);
+      return;
+    }
+    const timer = setTimeout(() => inFlight.delete(refreshToken), ROTATION_GRACE_MS);
+    // Don't hold the process open for a cache entry.
+    timer.unref?.();
+  });
+
+  return pending;
+}
 
 /** A dead admin session: cookies wiped, client bounced to the login screen. */
 function dead(message: string): NextResponse {
@@ -28,17 +82,11 @@ function dead(message: string): NextResponse {
 /**
  * Proxies a backend call on behalf of the **admin** session.
  *
- * Every admin request passes three gates before it reaches the backend:
- * 1. the httpOnly admin cookies exist (browser-session scoped — a browser close
- *    drops them),
- * 2. the HMAC-signed idle stamp is present, untampered, and unexpired,
- * 3. the backend still accepts the token (with one transparent refresh).
- *
- * On success the idle deadline slides forward. Any failure clears the cookies,
- * so a dead session can never linger client-side.
- *
- * The browser never sees a token: it lives only in the httpOnly cookie and is
- * injected here, server-side.
+ * The token lives only in an httpOnly, browser-session cookie and is injected
+ * here — the browser never sees it. A `401` from the backend triggers one shared
+ * refresh (see {@link rotate}); if that refresh is itself rejected the session is
+ * over (expired, revoked, or past the backend's 10-minute idle deadline) and the
+ * cookies are cleared so nothing stale lingers client-side.
  */
 export async function proxyAdmin(
   req: NextRequest,
@@ -49,28 +97,19 @@ export async function proxyAdmin(
   const refresh = req.cookies.get(ADMIN_REFRESH_COOKIE)?.value;
 
   if (!access && !refresh) return dead("Not authenticated");
-  if (!isIdleStampValid(req)) {
-    log.info("admin session idled out", { path });
-    return dead("Session timed out. Sign in again.");
-  }
 
   let result: BackendResult<unknown> = access
     ? await backend(path, { ...opts, accessToken: access })
     : ({ ok: false, status: 401, body: {} } as BackendResult<unknown>);
 
-  let rotated: { accessToken: string; refreshToken: string } | undefined;
+  let rotated: Rotated | undefined;
 
   if (!result.ok && result.status === 401 && refresh) {
-    const refreshed = await backend<{ data: { accessToken: string; refreshToken: string } }>(
-      "/auth/refresh",
-      { method: "POST", body: { refresh_token: refresh } },
-    );
-    if (!refreshed.ok) {
-      log.info("admin refresh rejected", { status: refreshed.status });
-      return dead("Session expired. Sign in again.");
-    }
-    rotated = refreshed.body.data;
-    result = await backend(path, { ...opts, accessToken: rotated.accessToken });
+    const fresh = await rotate(refresh);
+    if (!fresh) return dead("Session expired. Sign in again.");
+
+    rotated = fresh;
+    result = await backend(path, { ...opts, accessToken: fresh.accessToken });
   }
 
   // The backend rejects a non-admin token on these routes; treat it as a dead
@@ -79,6 +118,5 @@ export async function proxyAdmin(
 
   const res = NextResponse.json(result.body, { status: result.status });
   if (rotated) setAdminCookies(res, rotated.accessToken, rotated.refreshToken);
-  else touchIdleStamp(res);
   return res;
 }
