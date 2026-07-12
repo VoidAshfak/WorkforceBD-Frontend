@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BadgeCheck,
@@ -164,7 +164,15 @@ function WorkerActivity() {
     setPage(1);
   };
 
-  const items = data?.items ?? [];
+  // Newest application first. The feed accumulates pages into one list, and the
+  // backend's ordering isn't dependable, so sort on the merged set rather than
+  // trusting the page order.
+  const items = useMemo(() => {
+    const list = data?.items ?? [];
+    return [...list].sort(
+      (a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime(),
+    );
+  }, [data?.items]);
   const hasMore = data ? data.pagination.page < data.pagination.total_pages : false;
 
   /** Count shown on a filter pill — total for "All", else the per-status count. */

@@ -1,5 +1,6 @@
 import AppHeader from "@/components/navigation/AppHeader";
 import BottomNav from "@/components/navigation/BottomNav";
+import PhoneFrame from "@/components/layout/PhoneFrame";
 import SessionGate from "@/components/auth/SessionGate";
 import NotificationSocket from "@/components/notifications/NotificationSocket";
 
@@ -10,15 +11,17 @@ import NotificationSocket from "@/components/notifications/NotificationSocket";
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full flex-col">
-      <SessionGate>
-        <AppHeader />
-        <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {children}
-        </main>
-        <BottomNav />
-        <NotificationSocket />
-      </SessionGate>
-    </div>
+    <PhoneFrame>
+      <div className="flex h-full flex-col">
+        <SessionGate>
+          <AppHeader />
+          <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {children}
+          </main>
+          <BottomNav />
+          <NotificationSocket />
+        </SessionGate>
+      </div>
+    </PhoneFrame>
   );
 }

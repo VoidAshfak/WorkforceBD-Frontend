@@ -30,14 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${appSans.variable} h-full antialiased`}>
-      {/* Muted backdrop frames the phone-width column like a floating device.
-          The frame is the single scroll container; the bottom nav sticks to it. */}
-      <body className="flex min-h-dvh justify-center bg-[#e9e9ec] py-3">
-        <ReduxProvider>
-          <div className="relative h-[calc(100dvh-1.5rem)] w-full max-w-md overflow-y-auto rounded-[2rem] border border-border bg-background shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
-            {children}
-          </div>
-        </ReduxProvider>
+      {/* Neutral shell. The mobile app wraps itself in <PhoneFrame>; the admin
+          dashboard is a desktop surface and fills the viewport. */}
+      <body className="min-h-dvh bg-background">
+        <ReduxProvider>{children}</ReduxProvider>
       </body>
     </html>
   );

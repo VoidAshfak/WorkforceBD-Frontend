@@ -1,5 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
 
+import { adminApi } from "@/store/api/adminApi";
 import { authApi } from "@/store/api/authApi";
 import { workerApi } from "@/store/api/workerApi";
 import { shiftsApi } from "@/store/api/shiftsApi";
@@ -22,6 +23,7 @@ export const makeStore = () =>
       [engagementApi.reducerPath]: engagementApi.reducer,
       [notificationsApi.reducerPath]: notificationsApi.reducer,
       [chatApi.reducerPath]: chatApi.reducer,
+      [adminApi.reducerPath]: adminApi.reducer,
     },
     middleware: (getDefault) =>
       getDefault().concat(
@@ -33,6 +35,7 @@ export const makeStore = () =>
         engagementApi.middleware,
         notificationsApi.middleware,
         chatApi.middleware,
+        adminApi.middleware,
       ),
   });
 

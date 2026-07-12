@@ -56,13 +56,13 @@ Every user has a `roles` array. Possible values: `worker`, `business`, `admin`.
 
 - One account can hold multiple roles (e.g. a user can be both `worker` and `business`)
 - Most features require admin verification of the profile before access is granted
-- `admin` role is assigned manually — not available via registration
+- `admin` role is provisioned server-side (`npm run admin:create`) — not available via registration. Admins sign in with username + password + email 2FA ([POST `/auth/admin/login`](#post-authadminlogin)), never the phone OTP flow.
 
 | Role | Can do |
 |---|---|
 | `worker` | Browse shifts, apply, track earnings |
 | `business` | Post shifts, manage applications, hire workers |
-| `admin` | Verify profiles, moderate content, manage platform |
+| `admin` | Verify profiles, moderate content, resolve disputes, block users, tune platform settings, monitor the platform |
 
 ---
 
@@ -356,6 +356,14 @@ Get a new access token using a valid refresh token.
 }
 ```
 
+**Error `403`** — account blocked by an admin
+```json
+{
+  "success": false,
+  "message": "Account is deactivated"
+}
+```
+
 > Call this when any protected request returns `401`. **Replace both** stored `accessToken` and `refreshToken` — the old refresh token is invalidated on use (token rotation).
 >
 > **Reuse detection:** refresh tokens are single-use. Replaying a token that was already rotated revokes the **entire session** (treated as theft). Never reuse or share a refresh token across requests. Tokens are stored hashed at rest, so a token value cannot be recovered from the database.
@@ -382,6 +390,84 @@ Revokes the session tied to the refresh token.
 ```
 
 > Delete both tokens from client storage after this call.
+
+---
+
+### POST `/auth/admin/login`
+
+Admin dashboard sign-in, **step 1 of 2**. Verifies username + password, then emails a 6-digit verification code to the admin's registered Gmail. No tokens are issued yet. Rate-limited: 5 attempts per IP per 15 minutes.
+
+**Request Body**
+```json
+{
+  "username": "admin",
+  "password": "<password>"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `username` | string | yes | 3–50 chars |
+| `password` | string | yes | 8–128 chars |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Verification code sent to your email",
+  "data": {
+    "two_factor_required": true,
+    "email_hint": "to***@gmail.com",
+    "expires_in_minutes": 5
+  }
+}
+```
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `401` | `Invalid credentials` | Unknown username, wrong password, non-admin account, or blocked account — always the same message (no username probing) |
+| `429` | `Too many attempts. Try again in 15 minutes.` | Rate limit |
+
+> Admin accounts are provisioned server-side with `npm run admin:create -- --phone +8801XXXXXXXXX --email you@gmail.com --username admin --password <password>` — never via signup. The email receives the 2FA codes, so it must be real. Mail is sent through Gmail SMTP (`GMAIL_USER` + `GMAIL_APP_PASSWORD` env vars — a Google App Password, not the account password); without creds the code is only logged to the server console (dev).
+
+---
+
+### POST `/auth/admin/verify-2fa`
+
+Admin sign-in, **step 2 of 2**. Verifies the mailed code and issues an admin session. Codes are single-use and expire after 5 minutes. Same rate limit as step 1.
+
+**Request Body**
+```json
+{
+  "username": "admin",
+  "code": "623234"
+}
+```
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Admin authentication successful",
+  "data": {
+    "accessToken": "<jwt with active_role: admin>",
+    "refreshToken": "<refresh_token>",
+    "user": { "id": "uuid", "phone": "+8801...", "email": "admin@gmail.com", "username": "admin", "roles": ["admin"] },
+    "active_role": "admin"
+  }
+}
+```
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `400` | `Invalid or expired code` | Wrong, expired, or already-used code |
+| `401` | `Invalid credentials` | Username no longer resolves to an active admin |
+
+> Token lifecycle (refresh/logout) is identical to worker/business sessions — use the same `/auth/refresh` and `/auth/logout`.
 
 ---
 
@@ -798,7 +884,7 @@ Worker-facing shift discovery feed and detail. All endpoints require:
 - `Authorization: Bearer <access_token>`
 - Active context must be `worker` (see [Account context](#account-context-active-role))
 
-Only shifts with status `published` or `applications_open` (and `shift_date` today or later) appear in discovery. A worker's **own business's** shifts are excluded from the feed, the dashboard counters, and cannot be applied to (a single user may hold both a worker and a business profile — same identity — but can't work their own posts; see the self-dealing `403` on [POST `/applications`](#post-applications)). Each shift carries computed slot counters:
+A shift appears in discovery while `shift_date` is today or later **and** it can still take workers: status `published`/`applications_open`, **or** status `worker_selected`/`worker_confirmed`/`checked_in`/`active` with open capacity (`hired_count < workers_needed`) — so a partially-staffed shift stays visible even after hiring started or the shift went live. A worker's **own business's** shifts are excluded from the feed, the dashboard counters, and cannot be applied to (a single user may hold both a worker and a business profile — same identity — but can't work their own posts; see the self-dealing `403` on [POST `/applications`](#post-applications)). Each shift carries computed slot counters:
 
 | Field | Meaning |
 |---|---|
@@ -1002,7 +1088,7 @@ Worker applies to shifts and tracks application state. All endpoints require:
 
 ### POST `/applications`
 
-Apply to a shift. Requires a verified worker profile. On success the owning business is notified instantly (`notification:new`, `data.kind = "new_applicant"` with `shift_id` + `application_id`).
+Apply to a shift. Requires a verified worker profile. A shift stays applyable until its end time as long as a slot is open — including after hiring started or the shift went live (a business may need to fill a spot mid-shift). On success the owning business is notified instantly (`notification:new`, `data.kind = "new_applicant"` with `shift_id` + `application_id`).
 
 **Request Body**
 ```json
@@ -1043,8 +1129,8 @@ Apply to a shift. Requires a verified worker profile. On success the owning busi
 | `403` | `Complete your worker profile to continue` | No worker profile yet |
 | `403` | `You can't apply to a shift posted by your own business account` | Self-dealing — the shift's owning user is you (one identity may hold both profiles) |
 | `404` | `Shift not found` | Unknown/deleted shift |
-| `409` | `This shift is not accepting applications` | Shift not in an applyable state |
-| `409` | `This shift has already passed` | `shift_date` in the past |
+| `409` | `This shift is not accepting applications` | Shift not in an applyable state (`published`/`applications_open`/`worker_selected`/`worker_confirmed`/`checked_in`/`active`) |
+| `409` | `This shift has already ended` | The shift's end time has passed |
 | `409` | `This shift is already full` | All slots accepted |
 | `409` | `You have already applied to this shift` | Active application exists |
 | `409` | `You have withdrawn from this shift and cannot apply again` | Prior withdrawal (terminal) |
@@ -2559,11 +2645,11 @@ The caller's ratings plus their received summary.
 
 ## Admin
 
-Admin-only verification review. All endpoints require:
+Admin dashboard API: platform monitoring (counters + graph series), verification review, shift-post moderation, user management (block/unblock), and runtime platform settings. Dispute rulings live under [`/disputes/admin`](#disputes) and payout processing under [`/payments/admin/payouts`](#payments--wallet). All endpoints require:
 - `Authorization: Bearer <access_token>`
-- User must have `admin` role (provisioned through the separate admin portal — never via signup)
+- User must have `admin` role (provisioned with `npm run admin:create` — never via signup)
 
-Admins are **excluded from the public OTP flow**. `/auth/verify-otp` rejects any phone whose account holds the `admin` role with `403 "Admins must sign in through the admin portal"`. Admin accounts and their authentication are handled by a dedicated admin portal (separate from this worker/business API).
+Admins are **excluded from the public OTP flow**. `/auth/verify-otp` rejects any phone whose account holds the `admin` role with `403 "Admins must sign in through the admin portal"`. Admins sign in with username + password + email 2FA — see [POST `/auth/admin/login`](#post-authadminlogin) and [POST `/auth/admin/verify-2fa`](#post-authadminverify-2fa).
 
 ---
 
@@ -2750,6 +2836,248 @@ Approve or reject a shift post. Approve → `published` (worker-visible); the es
 | `404` | `Shift not found` | Unknown/deleted shift |
 | `409` | `Shift is not pending approval` | Shift not in `pending_approval` |
 | `422` | `note is required when rejecting` | Reject without a note |
+
+---
+
+### GET `/admin/dashboard`
+
+Headline platform counters for the dashboard home screen — everything the admin needs to see at a glance, in one call.
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Dashboard fetched",
+  "data": {
+    "users": { "total": 9, "workers": 7, "businesses": 6, "blocked": 0 },
+    "pending_review": {
+      "worker_verifications": 1,
+      "business_verifications": 1,
+      "shift_posts": 0,
+      "open_disputes": 0,
+      "handshakes_awaiting_confirm": 0
+    },
+    "shifts": { "total": 11, "open": 1, "live": 2 },
+    "money": {
+      "escrow_held": "200",
+      "platform_fee_collected": "12",
+      "worker_earnings_total": "120"
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `pending_review.*` | Work queues needing admin attention (verifications, shift posts, disputes) plus handshakes sitting in `worker_done`/`business_done` |
+| `shifts.open` | `published` / `applications_open` |
+| `shifts.live` | `worker_selected` / `worker_confirmed` / `checked_in` / `active` |
+| `money.escrow_held` | Sum of `escrow_amount` across shifts with escrow currently `held` |
+| `money.platform_fee_collected` | Lifetime platform fee revenue (ledger rows with `reference_id = "platform_fee"`) |
+| `money.worker_earnings_total` | Lifetime worker payouts (sum of wallet `total_earned`) |
+
+---
+
+### GET `/admin/analytics`
+
+Daily time series for the dashboard graphs. One point per calendar day (UTC buckets), zero-filled — plot directly.
+
+**Query Parameters**
+
+| Param | Type | Default | Values |
+|---|---|---|---|
+| `days` | int | `30` | 7–90 |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Analytics fetched",
+  "data": {
+    "days": 30,
+    "since": "2026-06-13",
+    "series": [
+      {
+        "date": "2026-06-13",
+        "signups": 2,
+        "shifts_created": 3,
+        "payouts_count": 1,
+        "payouts_amount": 120,
+        "fee_count": 1,
+        "fee_amount": 12,
+        "disputes_raised": 0
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET `/admin/users`
+
+Paginated, filterable user directory (workers + businesses + admins). Newest first.
+
+**Query Parameters**
+
+| Param | Type | Default | Values |
+|---|---|---|---|
+| `role` | string | — | `worker` · `business` · `admin` |
+| `status` | string | — | `active` · `blocked` |
+| `search` | string | — | Matches phone, name, email, worker full name, or business name (≤ 100 chars) |
+| `page` | int | `1` | ≥ 1 |
+| `limit` | int | `10` | 1–50 |
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Users fetched",
+  "data": {
+    "items": [
+      {
+        "id": "uuid",
+        "phone": "+8801...",
+        "email": null,
+        "full_name": null,
+        "roles": ["worker"],
+        "is_active": true,
+        "created_at": "2026-06-16T10:00:00.000Z",
+        "worker_profiles": { "id": "uuid", "full_name": "Rahim", "verification_status": "verified", "reliability_score": "4.5" },
+        "business_profiles": null
+      }
+    ],
+    "pagination": { "page": 1, "limit": 10, "total": 9, "total_pages": 1 }
+  }
+}
+```
+
+---
+
+### GET `/admin/users/:userId`
+
+Single user detail: both profiles (with shift counters), worker wallet snapshot, and full sanction history (`sanctions`, newest first).
+
+**Response `200`** (shape highlights)
+```json
+{
+  "data": {
+    "id": "uuid",
+    "phone": "+8801...",
+    "roles": ["worker"],
+    "is_active": true,
+    "worker_profiles": { "id": "uuid", "full_name": "Rahim", "verification_status": "verified", "reliability_score": "4.5", "completed_shift_count": 3, "no_show_count": 0 },
+    "business_profiles": null,
+    "wallets": { "balance": "120", "total_earned": "120" },
+    "sanctions": [
+      { "id": "uuid", "sanction_type": "ban", "reason": "…", "severity": "high", "is_active": false, "created_at": "…", "expires_at": null }
+    ]
+  }
+}
+```
+
+**Error `404`** — `User not found`
+
+---
+
+### POST `/admin/users/:userId/block`
+
+Blocks a user platform-wide (works for both worker and business accounts — the block is on the **user**, so a dual-role account loses both). Atomically: deactivates the account, records a `ban` sanction, and revokes **every live session and refresh token**. The user can't sign in, and any access token they still hold dies at its natural expiry (≤ 15 min) — refresh is rejected with `403 "Account is deactivated"`.
+
+| Param | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `userId` | path | UUID | yes | Target user |
+| `reason` | body | string | yes | ≤ 500 chars — stored on the sanction |
+| `severity` | body | string | no | `low` · `medium` · `high` (default) · `critical` |
+
+**Response `200`**
+```json
+{ "success": true, "message": "User blocked", "data": { "user_id": "uuid", "is_active": false } }
+```
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `403` | `Admin accounts can't be blocked from here` | Target holds the `admin` role |
+| `404` | `User not found` | Unknown/deleted user |
+| `409` | `You can't block your own account` | Self-block |
+| `409` | `User is already blocked` | Already inactive |
+
+---
+
+### POST `/admin/users/:userId/unblock`
+
+Reactivates a blocked user and closes their active sanctions. The user is notified.
+
+| Param | In | Type | Required | Notes |
+|---|---|---|---|---|
+| `userId` | path | UUID | yes | Target user |
+| `note` | body | string | no | ≤ 500 chars — included in the notification |
+
+**Response `200`**
+```json
+{ "success": true, "message": "User unblocked", "data": { "user_id": "uuid", "is_active": true } }
+```
+
+**Error `409`** — `User is not blocked`
+
+---
+
+### GET `/admin/settings`
+
+All runtime-tunable platform constants with live values. A key with `is_overridden: false` is running on its compiled default. Changes apply **without a redeploy**: instantly in the process that took the edit, within ≤ 60 s in any other (settings cache refresh).
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "message": "Settings fetched",
+  "data": [
+    {
+      "key": "PLATFORM_FEE_PERCENT",
+      "value": 10,
+      "default": 10,
+      "is_overridden": false,
+      "min": 0,
+      "max": 50,
+      "description": "Platform commission (%) on top of worker pay, escrowed at submit and captured per payout.",
+      "updated_at": null,
+      "updated_by": null
+    }
+  ]
+}
+```
+
+Tunable keys: `PLATFORM_FEE_PERCENT`, `HANDSHAKE_AUTO_CONFIRM_HOURS`, `CHECKIN_RADIUS_METERS`, `CHECKIN_GRACE_MINUTES`, `CHECKIN_MAX_ACCURACY_METERS`, `BUSINESS_WALLET_SEED_BALANCE`, `MIN_BUSINESS_TOPUP`, `LARGE_REQUEST_WORKER_THRESHOLD`, `CANCEL_FREE_NOTICE_HOURS`, `PENALTY_MIN_RATE`, `PENALTY_MAX_RATE`, `PENALTY_TIMING_MIN_RATE`, `PENALTY_TIMING_MAX_RATE`, `PENALTY_INSTANT_BASE`, `PENALTY_FACTOR_WEIGHT`.
+
+> Fee changes only affect **future** money movements: escrow already held keeps the fee captured at its submit-time rate (release clamps to what is actually held). The sweeper interval (`HANDSHAKE_SWEEP_INTERVAL_MINUTES`) is read once at boot and is deliberately **not** tunable here.
+
+---
+
+### PATCH `/admin/settings/:key`
+
+Overrides one setting. Value must be numeric and within the key's `min`/`max`.
+
+**Request Body**
+```json
+{ "value": 12 }
+```
+
+**Response `200`** — the updated setting object (same shape as the list item).
+
+**Errors**
+
+| Code | Message | Cause |
+|---|---|---|
+| `422` | `Unknown platform setting: <key>` | Key not in the tunable list |
+| `422` | `Value must be between <min> and <max>` | Out of bounds |
+
+---
+
+### DELETE `/admin/settings/:key`
+
+Removes the override — the key reverts to its compiled default. Returns the setting object.
 
 ---
 

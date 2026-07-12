@@ -1,3 +1,4 @@
+import PhoneFrame from "@/components/layout/PhoneFrame";
 import SessionGate from "@/components/auth/SessionGate";
 
 /**
@@ -7,8 +8,10 @@ import SessionGate from "@/components/auth/SessionGate";
  */
 export default function OnboardingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-full w-full flex-col">
-      <SessionGate>{children}</SessionGate>
-    </div>
+    <PhoneFrame>
+      <div className="flex min-h-full w-full flex-col">
+        <SessionGate>{children}</SessionGate>
+      </div>
+    </PhoneFrame>
   );
 }
