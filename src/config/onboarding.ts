@@ -47,6 +47,7 @@ export const BUSINESS_TYPE_OPTIONS: { value: string; label: string; emoji: strin
   { value: "Hotel & Hospitality", label: "Hotel", emoji: "🏨" },
   { value: "Retail & Shop", label: "Retail", emoji: "🛍️" },
   { value: "Corporate & Office", label: "Corporate", emoji: "🏢" },
+  { value: "School & Education", label: "School", emoji: "🏫" },
   { value: "Other", label: "Other", emoji: "✨" },
 ];
 
@@ -66,6 +67,10 @@ export const BUSINESS_PERK_OPTIONS: {
 /** Picks a playful emoji for a skill by keyword, with a safe default. */
 export function skillEmoji(name: string): string {
   const n = name.toLowerCase();
+  // Education / mentoring first — "supply teaching" would otherwise fall through
+  // to the generic "support" match below.
+  if (n.includes("teach") || n.includes("tutor") || n.includes("school") || n.includes("classroom")) return "🎓";
+  if (n.includes("mentor") || n.includes("coach") || n.includes("advis") || n.includes("consult")) return "🧑‍🏫";
   if (n.includes("bar")) return "🍸";
   if (n.includes("waiter") || n.includes("food")) return "🍽️";
   if (n.includes("promot") || n.includes("activation")) return "📣";
